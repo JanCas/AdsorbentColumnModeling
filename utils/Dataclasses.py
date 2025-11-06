@@ -216,6 +216,7 @@ class BaseIsothermFit(ABC):
 
     @abstractmethod
     def q_eq_si(self, C_eq_si: float) -> float:
+        print("Here")
         ...
 
 
@@ -247,7 +248,7 @@ class TemkinIsothermFit(BaseIsothermFit):
         """
         match self.B_units:
             case "kJ/mol":
-                return self.B * 1000  # Convert kJ/mol to J/mol
+                return self.B * 1000 * Li_MW  # Convert kJ/mol to J/mol
             case "J/mol":
                 return self.B
             case _:
@@ -260,10 +261,8 @@ class TemkinIsothermFit(BaseIsothermFit):
         T: Temperature in K
         Returns q_eq in mol/kg
         """
-
         interm = ideal_gas_constant * T / self.B_si
-
-        return interm * ca.log(self.A_si) + interm * ca.log(C_eq_si)
+        return ca.fmax(interm * ca.log(self.A_si) + interm * ca.log(C_eq_si), 0)
 
     @classmethod
     def from_dict(cls, data: dict) -> "TemkinIsothermFit":
