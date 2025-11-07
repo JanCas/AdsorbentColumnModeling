@@ -327,13 +327,30 @@ class Isotherm:
             equilibrium_uptake=data["q_e"],
             equilibrium_uptake_units=data["q_e_units"]
         )
-    
+
+@dataclass(frozen=True)
+class BreakthroughCurve:
+    flowrate: int
+    flowrate_units: str
+    BV: list[float]
+    C_out_over_C_in: list[float]
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BreakthroughCurve":
+        return cls(
+            flowrate=data["flowrate"],
+            flowrate_units=data["flowrate_units"],
+            BV=data["BV"],
+            C_out_over_C_in=data["C_out/C_in"]
+        )
+
 @dataclass(frozen=True)
 class Study:
     column_parameters: ColumnParameters
     sorbent_properties: SorbentProperties
     isotherm: Isotherm
     kinetics_experiments: list[KineticsExperiment]
+    breakthrough_curves: list[BreakthroughCurve]
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
@@ -345,12 +362,17 @@ class Study:
             KineticsExperiment.from_dict(exp_data, kinetics_units)
             for exp_data in data["KineticsExperiments"]
         ]
+        breakthrough_curves = [
+            BreakthroughCurve.from_dict(bc_data)
+            for bc_data in data["ColumnBreakthroughData"]
+        ]
 
         return cls(
             column_parameters=column_parameters,
             sorbent_properties=sorbent_properties,
             isotherm=isotherm,
-            kinetics_experiments=kinetics_experiments
+            kinetics_experiments=kinetics_experiments,
+            breakthrough_curves=breakthrough_curves
         )
 
     @classmethod
