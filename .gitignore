@@ -3,3 +3,5 @@
 /tests
 /__pycache__/
 utils/__pycache__/*.pyc
+*.gif
+utils/__pycache__/Dataclasses.cpython-313.pyc

@@ -79,6 +79,7 @@ class KineticsUnits:
 class KineticsExperiment:
     T: float
     C_e: float
+    Ph: float
     time: list[float]
     q_t: list[float]
     kinetics_params: PseudoSecondOrderKineticsParameters
@@ -126,6 +127,7 @@ class KineticsExperiment:
             C_e=data["C_e"],
             time=data["time"],
             q_t=data["q_t"],
+            Ph=data["Ph"],
             kinetics_params=kinetics_params,
             kinetics_units=units
         )
@@ -219,6 +221,21 @@ class BaseIsothermFit(ABC):
         print("Here")
         ...
 
+@dataclass(frozen=True)
+class SipsIsothermFit(BaseIsothermFit):
+    fit_type: ClassVar[str] = "Sips"
+    K_s: float
+    n: float
+    Q_max: float
+    K_s_units: str
+    Q_max_units: str
+
+    def __post_init__(self):
+        Warning.warn("Sips Isotherm model is not yet implemented.")
+
+    @property
+    def K_s_si(self) -> float:
+        ...
 
 @dataclass(frozen=True)
 class TemkinIsothermFit(BaseIsothermFit):
@@ -279,14 +296,30 @@ IsothermFitDirectory = {
 }  
 
 @dataclass(frozen=True)
+class IsothermUnits:
+    C_e: str
+    q_e: str
+    T: str
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "IsothermUnits":
+        return cls(
+            C_e=data["C_e"],
+            q_e=data["q_e"],
+            T=data["T"],
+        )
+
+@dataclass(frozen=True)
 class Isotherm:
     isotherm_fit: BaseIsothermFit
     T: float
+    Ph: float
     equilibrium_concentration_units: str
     equilibrium_concentration: list[float]
     fit_type: str
     equilibrium_uptake: list[float]
     equilibrium_uptake_units: str
+    units: IsothermUnits
 
     @property
     def equilibrium_concentration_si(self) -> np.ndarray:
@@ -311,7 +344,7 @@ class Isotherm:
                 raise ValueError(f"Unsupported equilibrium uptake units: {self.equilibrium_uptake_units}")
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Isotherm":
+    def from_dict(cls, data: dict, units: IsothermUnits) -> "Isotherm":
         match data["FitType"]:
             case "Temkin":
                 isotherm_fit = TemkinIsothermFit.from_dict(data["FitParameters"])
@@ -321,11 +354,13 @@ class Isotherm:
         return cls(
             isotherm_fit=isotherm_fit,
             T=data["T"],
+            Ph=data["Ph"],
             equilibrium_concentration_units=data["C_e_units"],
             equilibrium_concentration=data["C_e"],
             fit_type=data["FitType"],
             equilibrium_uptake=data["q_e"],
-            equilibrium_uptake_units=data["q_e_units"]
+            equilibrium_uptake_units=data["q_e_units"],
+            units=units
         )
 
 @dataclass(frozen=True)
@@ -356,7 +391,8 @@ class Study:
     def from_dict(cls, data: dict) -> "Study":
         column_parameters = ColumnParameters.from_dict(data["ColumnProperties"])
         sorbent_properties = SorbentProperties.from_dict(data["SorbentProperties"])
-        isotherm = Isotherm.from_dict(data["Isotherm"])
+        isotherm_units = IsothermUnits.from_dict(data["IsothermUnits"])
+        isotherm = Isotherm.from_dict(data["Isotherm"], isotherm_units)
         kinetics_units = KineticsUnits.from_dict(data["KineticsUnits"])
         kinetics_experiments = [
             KineticsExperiment.from_dict(exp_data, kinetics_units)

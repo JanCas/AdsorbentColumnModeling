@@ -8,6 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 num_nodes=10
+flowrate_idx = 2
 
 def model(num_nodes: int, study: Study) -> do_mpc.model.Model:
     '''
@@ -26,7 +27,7 @@ def model(num_nodes: int, study: Study) -> do_mpc.model.Model:
     model.set_rhs('n_i', dn_i_dt)
 
     C_up = vertcat(study.column_parameters.influent_concentration_si, C_Li[:-1])  # Upstream concentration with boundary condition
-    dC_Li_dt = - study.column_parameters.interstitial_velocity_si[0] / dx * (C_Li - C_up) - (1 - study.column_parameters.porosity) / study.column_parameters.porosity * study.sorbent_properties.density * dn_i_dt
+    dC_Li_dt = - study.column_parameters.interstitial_velocity_si[flowrate_idx] / dx * (C_Li - C_up) - (1 - study.column_parameters.porosity) / study.column_parameters.porosity * study.sorbent_properties.density * dn_i_dt
 
     model.set_rhs('C_Li', dC_Li_dt)
     model.setup()
@@ -46,8 +47,7 @@ if __name__ == "__main__":
 
     simulator.x0['C_Li'] = np.zeros((num_nodes,1)) + .001
     simulator.x0['n_i'] = np.zeros((num_nodes,1)) + .001
-
-    for i in tqdm(range(3*3600)):
+    for i in tqdm(range(int(1.5*3600))):
         simulator.make_step()  # Advance the simulation by one time step
     
 
@@ -61,10 +61,11 @@ if __name__ == "__main__":
     end_node_concentration = simulator.data['_x', 'C_Li'][:,-1]
     ratio = end_node_concentration / s.column_parameters.influent_concentration_si
     plt.figure()
-    plt.plot(simulator.data['_time'] / 3600 * s.column_parameters.flowrate[0], ratio, label='C_out / C_in')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Concentration Ratio')
-    plt.title('Breakthrough Curve at Column Outlet')
+    plt.plot(simulator.data['_time'] / 3600 * s.column_parameters.flowrate[flowrate_idx], ratio, label='Model')
+    plt.plot(s.breakthrough_curves[flowrate_idx].BV, s.breakthrough_curves[flowrate_idx].C_out_over_C_in, 'o', label='Experimental')
+    plt.xlabel('BV')
+    plt.ylabel(r'$\frac{C_{out}}{C_{in}}$')
+    plt.title(f'Breakthrough Curve ({s.column_parameters.flowrate[flowrate_idx]} BV/h, {s.column_parameters.superficial_flowrate_si[flowrate_idx]*1000:.2e} L/s)')
     plt.legend()
     plt.grid()
     plt.show(block=False)
