@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 import json
 from pathlib import Path
 import casadi as ca
+from thermo import IAPWS95Liquid as Water
 
 Li_MW = 6.94  # g/mol
 ideal_gas_constant = 8.314  # J/(mol·K)
@@ -133,74 +134,189 @@ class KineticsExperiment:
         )
 
 @dataclass(frozen=True)
-class ColumnParameters:
+class ColumnProperties:
     Length: float
     Length_units: str
     Diameter: float
     Diameter_units: str
     porosity: float
-    flowrate: list[float]
-    influent_concentration: float
-    flowrate_units: str
-    influent_concentration_units: str
 
     @property
-    def superficial_flowrate_si(self) -> float:
-        "Converts the flowrate to m3/s depending on the units specified."
-        match self.flowrate_units:
-            case "BV/h":
-                return np.array(self.flowrate) * (np.pi * (self.Diameter / 2) ** 2 * self.Length) / 3600  # Convert to m3/s
-            case "m3/s":
-                return self.flowrate
+    def Length_si(self) -> float:
+        "Converts the column length to meters depending on the units specified."
+        match self.Length_units:
+            case "m":
+                return self.Length
             case _:
-                raise ValueError(f"Unsupported flowrate units: {self.flowrate_units}")
-
+                raise ValueError(f"Unsupported Length units: {self.Length_units}")
+            
     @property
-    def influent_concentration_si(self) -> float:
-        "Converts the influent concentration to mol/m³ depending on the units specified."
-        match self.influent_concentration_units:
-            case "mg/L":
-                return convert_mg_per_L_to_mol_per_m3(self.influent_concentration)
-            case "mol/m3":
-                return self.influent_concentration
+    def Diameter_si(self) -> float:
+        "Converts the column diameter to meters depending on the units specified."
+        match self.Diameter_units:
+            case "m":
+                return self.Diameter
             case _:
-                raise ValueError(f"Unsupported influent concentration units: {self.influent_concentration_units}")
-
+                raise ValueError(f"Unsupported Diameter units: {self.Diameter_units}")
+            
     @property
-    def superficial_velocity_si(self) -> float:
-        "Calculates the superficial velocity in m/s."
-        cross_sectional_area = np.pi * (self.Diameter / 2) ** 2
-        return self.superficial_flowrate_si / cross_sectional_area
+    def cross_sectional_area_si(self) -> float:
+        "Calculates the cross-sectional area of the column in m²."
+        radius = self.Diameter_si / 2
+        return np.pi * radius ** 2
     
     @property
-    def interstitial_velocity_si(self) -> float:
-        "Calculates the interstitial velocity in m/s."
-        return self.superficial_velocity_si / self.porosity
+    def volume_si(self) -> float:
+        "Calculates the volume of the column in m³."
+        return self.cross_sectional_area_si * self.Length_si
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ColumnParameters":
+    def from_dict(cls, data: dict) -> "ColumnProperties":
         return cls(
             Length=data["Length"],
-            Length_units=data.get("Length_units", "m"),
+            Length_units=data["Length_units"],
             Diameter=data["Diameter"],
-            Diameter_units=data.get("Diameter_units", "m"),
-            porosity=data["porosity"],
+            Diameter_units=data["Diameter_units"],
+            porosity=data["porosity"]
+        )
+
+@dataclass(frozen=True)
+class BreakthroughCurveUnits:
+    flowrate: str
+    influent_concentration: str
+    T: str
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BreakthroughCurveUnits":
+        return cls(
             flowrate=data["flowrate"],
             influent_concentration=data["influent_concentration"],
+            T=data["T"]
+        )
+
+@dataclass(frozen=True)
+class BreakthroughCurve:
+    flowrate: int
+    T: float
+    PH: float
+    influent_concentration: float
+    BV: list[float]
+    C_out_over_C_in: list[float]
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BreakthroughCurve":
+        return cls(
+            flowrate=data["flowrate"],
             flowrate_units=data["flowrate_units"],
-            influent_concentration_units=data["influent_concentration_units"]
+            BV=data["BV"],
+            C_out_over_C_in=data["C_out/C_in"]
+        )
+    
+@dataclass(frozen=True)
+class BreakthroughCurves:
+    curves: list[BreakthroughCurve]
+    units: BreakthroughCurveUnits
+
+    def filter(self, **filter) -> list[BreakthroughCurve]:
+        if not filter:
+            return self.curves
+
+        filtered_curves = [
+            curve for curve in self.curves
+            if all(getattr(curve, key) == value for key, value in filter.items())
+        ]
+        return filtered_curves
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "BreakthroughCurves":
+        units = BreakthroughCurveUnits.from_dict(data["Units"])
+        curves = [
+            BreakthroughCurve.from_dict(curve_data)
+            for curve_data in data["Curves"]
+        ]
+        return cls(
+            curves=curves,
+            units=units
+        )
+
+@dataclass(frozen=True)
+class ColumnExperiments:
+    column_properties: ColumnProperties
+    breakthrough_curves: BreakthroughCurves
+
+    def superficial_flowrate_si(self, **filter) -> float:
+        "Converts the flowrate to m3/s depending on the units specified."
+
+        filtered_curves = self.breakthrough_curves.filter(**filter)
+
+        match self.breakthrough_curves.units.flowrate:
+            case "BV/h":
+                return [curve.flowrate * self.volume_si / 3600 for curve in filtered_curves]  # Convert to m3/s
+            case "m3/s":
+                return [curve.flowrate for curve in filtered_curves]
+            case _:
+                raise ValueError(f"Unsupported flowrate units: {self.breakthrough_curves.units.flowrate}")
+
+    def influent_concentration_si(self, **filter) -> float:
+        "Converts the influent concentration to mol/m³ depending on the units specified."
+
+        filtered_curves = self.breakthrough_curves.filter(**filter)
+
+        match self.breakthrough_curves.units.influent_concentration:
+            case "mg/L":
+                return [convert_mg_per_L_to_mol_per_m3(curve.influent_concentration) for curve in filtered_curves]
+            case "mol/m3":
+                return [curve.influent_concentration for curve in filtered_curves]
+            case _:
+                raise ValueError(f"Unsupported influent concentration units: {self.breakthrough_curves.units.influent_concentration}")
+
+    def superficial_velocity_si(self, **filter) -> float:
+        "Calculates the superficial velocity in m/s."
+        return self.superficial_flowrate_si(filter) / self.column_properties.cross_sectional_area_si
+    
+    def interstitial_velocity_si(self, **filter) -> float:
+        "Calculates the interstitial velocity in m/s."
+        return self.superficial_velocity_si(filter) / self.column_properties.porosity
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ColumnExperiments":
+        return cls(
+            column_properties=ColumnProperties.from_dict(data["Properties"]),
+            breakthrough_curves=BreakthroughCurves.from_dict(data["BreakthroughCurves"])
         )
     
 @dataclass(frozen=True)
 class SorbentProperties:
     density: float
     density_units: str
+    particle_diameter: float
+    particle_diameter_units: str
+
+    @property
+    def density_si(self) -> float:
+        "Converts the sorbent density to kg/m³ depending on the units specified."
+        match self.density_units:
+            case "kg/m3":
+                return self.density
+            case _:
+                raise ValueError(f"Unsupported density units: {self.density_units}")
+
+    @property
+    def particle_diameter_si(self) -> float:
+        "Converts the particle diameter to meters depending on the units specified."
+        match self.particle_diameter_units:
+            case "m":
+                return self.particle_diameter
+            case _:
+                raise ValueError(f"Unsupported particle diameter units: {self.particle_diameter_units}")
 
     @classmethod
     def from_dict(cls, data: dict) -> "SorbentProperties":
         return cls(
             density=data["density"],
-            density_units=data["density_units"]
+            density_units=data["density_units"],
+            particle_diameter=data["particle_diameter"],
+            particle_diameter_units=data["particle_diameter_units"]
         )
 
 @dataclass(frozen=True)
@@ -363,33 +479,30 @@ class Isotherm:
             units=units
         )
 
-@dataclass(frozen=True)
-class BreakthroughCurve:
-    flowrate: int
-    flowrate_units: str
-    BV: list[float]
-    C_out_over_C_in: list[float]
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "BreakthroughCurve":
-        return cls(
-            flowrate=data["flowrate"],
-            flowrate_units=data["flowrate_units"],
-            BV=data["BV"],
-            C_out_over_C_in=data["C_out/C_in"]
-        )
 
 @dataclass(frozen=True)
 class Study:
-    column_parameters: ColumnParameters
+    column_experiments: ColumnExperiments
     sorbent_properties: SorbentProperties
     isotherm: Isotherm
     kinetics_experiments: list[KineticsExperiment]
-    breakthrough_curves: list[BreakthroughCurve]
+
+    def particle_reynolds(self, **filter) -> list[float]:
+        "Calculates the reynolds number for using the particle diameter for the breaktrhough curves matching the filter."
+        curves= self.column_experiments.breakthrough_curves.filter(**filter)
+        
+        velocities = self.column_experiments.interstitial_velocity_si(**filter)
+        dp = self.sorbent_properties.particle_diameter_si
+        rho = [Water(T=curve.T).rho for curve in curves]
+        mu = [Water(T=curve.T).mu for curve in curves]
+
+        return rho * velocities * dp / mu
+
+        
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
-        column_parameters = ColumnParameters.from_dict(data["ColumnProperties"])
+        column_expertiments = ColumnExperiments.from_dict(data["ColumnExperiments"])
         sorbent_properties = SorbentProperties.from_dict(data["SorbentProperties"])
         isotherm_units = IsothermUnits.from_dict(data["IsothermUnits"])
         isotherm = Isotherm.from_dict(data["Isotherm"], isotherm_units)
@@ -398,17 +511,12 @@ class Study:
             KineticsExperiment.from_dict(exp_data, kinetics_units)
             for exp_data in data["KineticsExperiments"]
         ]
-        breakthrough_curves = [
-            BreakthroughCurve.from_dict(bc_data)
-            for bc_data in data["ColumnBreakthroughData"]
-        ]
 
         return cls(
-            column_parameters=column_parameters,
+            column_expertiments=column_expertiments,
             sorbent_properties=sorbent_properties,
             isotherm=isotherm,
-            kinetics_experiments=kinetics_experiments,
-            breakthrough_curves=breakthrough_curves
+            kinetics_experiments=kinetics_experiments
         )
 
     @classmethod
