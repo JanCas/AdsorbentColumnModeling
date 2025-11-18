@@ -1,5 +1,9 @@
 import numpy as np
-import do_mpc
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import do_mpc
 from utils.Dataclasses import Study, BreakthroughCurve
 from casadi import vertcat
 from tqdm import tqdm
@@ -33,7 +37,7 @@ def model(num_nodes: int, study: Study, curve: BreakthroughCurve) -> do_mpc.mode
 
     advection_term = - study.column_experiments.interstitial_velocity_si(curve) / dx * (C_Li - C_up) 
     sorption_term = - (1 - study.column_experiments.column_properties.porosity) / study.column_experiments.column_properties.porosity * study.sorbent_properties.density * dn_i_dt
-    diffusion_term = D_ax / dx**2 * (C_down - 2 * C_Li + C_up)
+    diffusion_term = D_ax / dx**2 * (C_down - 2 * C_Li + C_up) * 0
 
     dC_Li_dt = advection_term + sorption_term + diffusion_term
 
@@ -48,7 +52,7 @@ if __name__ == "__main__":
 
 
     fig, ax = plt.subplots(1,len(s.column_experiments.breakthrough_curves.curves), figsize=(8,4), sharey=True)
-    fig.suptitle('Breakthrough Curves Simulation vs Experimental Data')
+    fig.suptitle('Breakthrough Curves Simulation vs Experimental Data (ADV)')
 
 
     for curve, axes in tqdm(zip(s.column_experiments.breakthrough_curves.curves, ax), desc="Curves", position=0, total=len(s.column_experiments.breakthrough_curves.curves)):
@@ -88,10 +92,10 @@ if __name__ == "__main__":
         axes.legend()
         axes.grid()
 
-    pd.DataFrame(simulation_results).to_csv('Results/diff/simulation_results.csv', index=False) 
+    pd.DataFrame(simulation_results).to_csv(r'Results/adv/simulation_results.csv', index=False) 
     
     fig.tight_layout()
     fig.show()
-    fig.savefig('Results/diff/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
-    fig.savefig('Results/diff/breakthrough_curves_simulation_vs_experimental.svg')
+    fig.savefig(r'Results/adv/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
+    fig.savefig(r'Results/adv/breakthrough_curves_simulation_vs_experimental.svg')
     input("End of simulation, press Enter to exit...")
