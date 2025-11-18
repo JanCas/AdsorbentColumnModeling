@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 import numpy as np
 from typing import ClassVar
 from abc import ABC, abstractmethod
@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 import casadi as ca
 from thermo import IAPWS95Liquid as Water
+import uuid
+from pyEQL import Solution
 
 Li_MW = 6.94  # g/mol
-D_Li_in_H2O = 1.03e-9  # m²/s at 25°C
+D_Li_in_H2O = lambda T: Solution(temperature=f'{T}K').get_property("Li+", "transport.diffusion_coefficient").magnitude  # m²/s
 ideal_gas_constant = 8.314  # J/(mol·K)
 
 def convert_mg_per_L_to_mol_per_m3(concentration_mg_per_L: float | np.ndarray) -> float | np.ndarray:
@@ -208,6 +210,7 @@ class BreakthroughCurve:
     influent_concentration: float
     BV: list[float]
     C_out_over_C_in: list[float]
+    uuid: uuid.UUID = field(default_factory=uuid.uuid4)
 
     @property
     def run_length_hours(self) -> float:
@@ -528,19 +531,60 @@ class Study:
         if curve is not None:
             filter.update(asdict(curve))
         velocities = self.column_experiments.interstitial_velocity_si(**filter)
+        temperatures = [curve.T for curve in self.column_experiments.breakthrough_curves.filter(**filter)]
+        D_Li_in_H2O_list = [D_Li_in_H2O(T) for T in temperatures]
 
-        return velocities * self.sorbent_properties.particle_diameter_si / D_Li_in_H2O
+        return velocities * self.sorbent_properties.particle_diameter_si / D_Li_in_H2O_list
 
     def schmidt_number(self,curve: BreakthroughCurve = None,T: float = None) -> float:
         "Calculates the schmidt number at temperature T (K)."
         if curve is not None:
-            T = curve.T
-        water = Water(T=T)
-        mu = water.mu()  # Dynamic viscosity in Pa.s
-        rho = water.rho_mass()  # Density in kg/m³
-
-        return mu / (rho * D_Li_in_H2O)
+            T = [curve.T]
+        elif T is None:
+            T = [curve.T for curve in self.column_experiments.breakthrough_curves.curves]
+        elif not isinstance(T, list):
+            T = [T]
         
+        water = [Water(T=temp) for temp in T]
+        mu = [w.mu() for w in water]  # Dynamic viscosity in Pa.s
+        rho = [w.rho_mass() for w in water]  # Density in kg/m³
+        D_Li_in_H2O_list = [D_Li_in_H2O(temp) for temp in T]
+
+        return np.array(mu) / (np.array(rho) * np.array(D_Li_in_H2O_list))
+
+    def axial_dispersion_coefficient(self, curve: BreakthroughCurve = None, **filter) -> list[float]:
+        '''
+        Calculates the axial dispersion coefficient (D_L) for the breakthrough curves matching the filter.
+        The axial dispersion is calculated based on DOI 10.1007/s00231-005-0019-0 equations 18 and 19.
+
+        Returns: 
+            D_L: list of axial dispersion coefficients in m²/s
+            Pe_L_d: list of Peclet numbers based on sorbent particle diameter
+            Pe_L: list of Peclet numbers based on column length
+        '''
+        
+        # if curve is not None:
+        #     filter.update(asdict(curve))
+
+        velocities = self.column_experiments.interstitial_velocity_si(curve, **filter)
+        dp = self.sorbent_properties.particle_diameter_si
+        peclet_numbers = self.particle_peclet_number(curve, **filter)
+        Sc = self.schmidt_number(curve, **filter)
+
+        p = .48 / Sc**(.15) + (.5 - .48 / Sc**(.15)) * np.exp(-75 * Sc / peclet_numbers)
+        term1 = (1-p)**2 * peclet_numbers / 5
+        term2 = peclet_numbers**2 / 25 * p * (1-p)**3 * (np.exp(-5 / (p*(1-p)*peclet_numbers)) -1)
+        term3 = 1 / (self.column_experiments.column_properties.tortuosity * peclet_numbers)
+        
+        inv_peclet = np.array(term1) + np.array(term2) + np.array(term3)
+        Pe_L_d = 1 / inv_peclet
+
+        D_L = velocities * dp / Pe_L_d
+        Pe_L = velocities * self.column_experiments.column_properties.Length_si / D_L
+
+        return D_L, Pe_L_d, Pe_L
+
+
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":

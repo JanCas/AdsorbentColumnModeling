@@ -2,10 +2,10 @@ import numpy as np
 import do_mpc
 from utils.Dataclasses import Study, BreakthroughCurve
 from casadi import vertcat
-from dataclasses import asdict
-from pprint import pprint
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from utils.ResultsDataclasses import SimulationResult
+import pandas as pd
 
 num_nodes=25
 
@@ -16,6 +16,7 @@ def model(num_nodes: int, study: Study, curve: BreakthroughCurve) -> do_mpc.mode
     '''
 
     dx = study.column_experiments.column_properties.Length_si / num_nodes
+    (D_ax,), _, _ = study.axial_dispersion_coefficient(curve)
 
     model = do_mpc.model.Model('continuous')
 
@@ -37,10 +38,23 @@ def model(num_nodes: int, study: Study, curve: BreakthroughCurve) -> do_mpc.mode
 if __name__ == "__main__":
     s = Study.from_json('LiteratureReview/isotherm_kinetics.json', "jiangAdsorptionLithiumIons2020")
 
+    simulation_results = []
+
+
     fig, ax = plt.subplots(1,len(s.column_experiments.breakthrough_curves.curves), figsize=(8,4), sharey=True)
     fig.suptitle('Breakthrough Curves Simulation vs Experimental Data')
 
+
     for curve, axes in tqdm(zip(s.column_experiments.breakthrough_curves.curves, ax), desc="Curves", position=0, total=len(s.column_experiments.breakthrough_curves.curves)):
+        
+        sr = SimulationResult(
+            curve_uuid=curve.uuid,
+            Reynolds_number=s.particle_reynolds(curve)[0],
+            Peclet_number=s.particle_peclet_number(curve)[0],
+            Schmidt_number=s.schmidt_number(curve)
+        )
+        simulation_results.append(sr)
+
 
         m = model(num_nodes, s, curve)
 
@@ -54,14 +68,9 @@ if __name__ == "__main__":
         simulator.x0['n_i'] = np.zeros((num_nodes,1)) + .001
         for i in tqdm(range(int(curve.run_length_hours * 3600)), desc=f"Simulating {curve.flowrate} BV/h", position=1, leave=False):
             simulator.make_step()  # Advance the simulation by one time step
-        
 
-        # graphics = do_mpc.graphics.Graphics(simulator.data)
 
-        # fig, ax = plt.subplots(2,1, figsize=(8,6), sharex=True)
-        # graphics.add_line(var_type='_x', var_name='C_Li', axis=ax[0], label='C_Li (mol/m^3)')
-        # graphics.add_line(var_type='_x', var_name='n_i', axis=ax[1], label='n_i (mol/kg)')
-        # plt.show(block=False)
+
 
         end_node_concentration = simulator.data['_x', 'C_Li'][:,-1]
         ratio = end_node_concentration / s.column_experiments.influent_concentration_si(curve)
@@ -72,6 +81,11 @@ if __name__ == "__main__":
         axes.set_title(f'{curve.flowrate} BV/h, {s.column_experiments.superficial_velocity_si(curve)[0]*1000:.2e} L/s')
         axes.legend()
         axes.grid()
+
+    pd.DataFrame(simulation_results).to_csv('Results/simulation_results.csv', index=False) 
+    
     fig.tight_layout()
     fig.show()
+    fig.savefig('Results/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
+    fig.savefig('Results/breakthrough_curves_simulation_vs_experimental.svg')
     input("End of simulation, press Enter to exit...")
