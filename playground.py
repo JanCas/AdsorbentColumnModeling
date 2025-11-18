@@ -6,8 +6,9 @@ if __name__ == "__main__":
     
     curves = study.column_experiments.breakthrough_curves.curves
     
-    print(study.column_experiments.superficial_velocity_si())
+    print(study.column_experiments.superficial_velocity_si(curves[0]))
     print(study.column_experiments.interstitial_velocity_si())
     print(study.particle_reynolds())
     print(study.schmidt_number(T=303))
-    print(study.particle_peclet_number(curves[2]))
+    print(study.particle_peclet_number(curves[0]))
+    print(study.get_kinetics_experiment_from_curve(curves[0]))

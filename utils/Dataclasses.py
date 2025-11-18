@@ -209,6 +209,12 @@ class BreakthroughCurve:
     BV: list[float]
     C_out_over_C_in: list[float]
 
+    @property
+    def run_length_hours(self) -> float:
+        "Calculates the run length in hours based on the bed volumes and flowrate."
+        total_BV = self.BV[-1]
+        return total_BV / self.flowrate  # in hours
+
     @classmethod
     def from_dict(cls, data: dict) -> "BreakthroughCurve":
         return cls(
@@ -252,9 +258,10 @@ class ColumnExperiments:
     column_properties: ColumnProperties
     breakthrough_curves: BreakthroughCurves
 
-    def superficial_flowrate_si(self, **filter) -> float:
+    def superficial_flowrate_si(self, curve: BreakthroughCurve=None, **filter) -> float:
         "Converts the flowrate to m3/s depending on the units specified."
-
+        if curve is not None:
+            filter.update(asdict(curve))
         filtered_curves = self.breakthrough_curves.filter(**filter)
 
         match self.breakthrough_curves.units.flowrate:
@@ -265,9 +272,10 @@ class ColumnExperiments:
             case _:
                 raise ValueError(f"Unsupported flowrate units: {self.breakthrough_curves.units.flowrate}")
 
-    def influent_concentration_si(self, **filter) -> float:
+    def influent_concentration_si(self, curve: BreakthroughCurve=None, **filter) -> float:
         "Converts the influent concentration to mol/m³ depending on the units specified."
-
+        if curve is not None:
+            filter.update(asdict(curve))
         filtered_curves = self.breakthrough_curves.filter(**filter)
 
         match self.breakthrough_curves.units.influent_concentration:
@@ -278,13 +286,13 @@ class ColumnExperiments:
             case _:
                 raise ValueError(f"Unsupported influent concentration units: {self.breakthrough_curves.units.influent_concentration}")
 
-    def superficial_velocity_si(self, **filter) -> float:
+    def superficial_velocity_si(self, curve: BreakthroughCurve=None, **filter) -> float:
         "Calculates the superficial velocity in m/s."
-        return np.array(self.superficial_flowrate_si(**filter)) / self.column_properties.cross_sectional_area_si
+        return np.array(self.superficial_flowrate_si(curve, **filter)) / self.column_properties.cross_sectional_area_si
     
-    def interstitial_velocity_si(self, **filter) -> float:
+    def interstitial_velocity_si(self, curve: BreakthroughCurve=None, **filter) -> float:
         "Calculates the interstitial velocity in m/s."
-        return np.array(self.superficial_velocity_si(**filter)) / self.column_properties.porosity
+        return np.array(self.superficial_velocity_si(curve, **filter)) / self.column_properties.porosity
 
     @classmethod
     def from_dict(cls, data: dict) -> "ColumnExperiments":
@@ -494,6 +502,13 @@ class Study:
     sorbent_properties: SorbentProperties
     isotherm: Isotherm
     kinetics_experiments: list[KineticsExperiment]
+
+    def get_kinetics_experiment_from_curve(self, curve: BreakthroughCurve) -> KineticsExperiment:
+        "Returns the kinetics experiment that matches the temperature and pH of the given breakthrough curve."
+        for exp in self.kinetics_experiments:
+            if (exp.T == curve.T) and (exp.Ph == curve.PH) and (exp.C_e_si == self.column_experiments.influent_concentration_si(**asdict(curve))[0]):
+                return exp
+        raise ValueError("No matching kinetics experiment found for the given breakthrough curve.")
 
     def particle_reynolds(self, curve: BreakthroughCurve = None, **filter) -> list[float]:
         "Calculates the reynolds number for using the particle diameter for the breakthrough curves matching the filter."
