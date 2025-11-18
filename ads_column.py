@@ -56,12 +56,17 @@ if __name__ == "__main__":
 
 
     for curve, axes in tqdm(zip(s.column_experiments.breakthrough_curves.curves, ax), desc="Curves", position=0, total=len(s.column_experiments.breakthrough_curves.curves)):
+
+        (D_L,), (Pe_L_d,), (Pe_L,) = s.axial_dispersion_coefficient(curve)
         
         sr = SimulationResult(
-            curve_uuid=curve.uuid,
+            curve_flowrate=curve.flowrate,
             Reynolds_number=s.particle_reynolds(curve)[0],
-            Peclet_number=s.particle_peclet_number(curve)[0],
-            Schmidt_number=s.schmidt_number(curve)
+            Peclet_number_particle=s.particle_peclet_number(curve)[0],
+            Schmidt_number=s.schmidt_number(curve)[0],
+            D_L=D_L,
+            Peclet_number_axial_particle=Pe_L_d,
+            Peclet_number_axial_column=Pe_L
         )
         simulation_results.append(sr)
 
@@ -92,10 +97,11 @@ if __name__ == "__main__":
         axes.legend()
         axes.grid()
 
-    pd.DataFrame(simulation_results).to_csv(r'Results/adv/simulation_results.csv', index=False) 
+    # pd.DataFrame(simulation_results).to_csv(r'Results/adv/simulation_results.csv', index=False) 
     
     fig.tight_layout()
     fig.show()
-    fig.savefig(r'Results/adv/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
-    fig.savefig(r'Results/adv/breakthrough_curves_simulation_vs_experimental.svg')
+    # fig.savefig(r'Results/adv/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
+    # fig.savefig(r'Results/adv/breakthrough_curves_simulation_vs_experimental.svg')
+    print(pd.DataFrame(simulation_results))
     input("End of simulation, press Enter to exit...")
