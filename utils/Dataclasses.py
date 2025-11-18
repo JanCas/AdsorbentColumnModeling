@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import numpy as np
 from typing import ClassVar
 from abc import ABC, abstractmethod
@@ -8,6 +8,7 @@ import casadi as ca
 from thermo import IAPWS95Liquid as Water
 
 Li_MW = 6.94  # g/mol
+D_Li_in_H2O = 1.03e-9  # m²/s at 25°C
 ideal_gas_constant = 8.314  # J/(mol·K)
 
 def convert_mg_per_L_to_mol_per_m3(concentration_mg_per_L: float | np.ndarray) -> float | np.ndarray:
@@ -142,6 +143,11 @@ class ColumnProperties:
     porosity: float
 
     @property
+    def tortuosity(self) -> float:
+        "Calculates the tortuosity of the column based on the bruggeman correlation."
+        return (self.porosity) ** (-1/2)
+    
+    @property
     def Length_si(self) -> float:
         "Converts the column length to meters depending on the units specified."
         match self.Length_units:
@@ -207,17 +213,19 @@ class BreakthroughCurve:
     def from_dict(cls, data: dict) -> "BreakthroughCurve":
         return cls(
             flowrate=data["flowrate"],
-            flowrate_units=data["flowrate_units"],
+            T=data["T"],
+            PH=data["PH"],
+            influent_concentration=data["influent_concentration"],
             BV=data["BV"],
             C_out_over_C_in=data["C_out/C_in"]
         )
     
 @dataclass(frozen=True)
 class BreakthroughCurves:
-    curves: list[BreakthroughCurve]
+    curves: tuple[BreakthroughCurve, ...]
     units: BreakthroughCurveUnits
 
-    def filter(self, **filter) -> list[BreakthroughCurve]:
+    def filter(self, **filter) -> tuple[BreakthroughCurve, ...]:
         if not filter:
             return self.curves
 
@@ -251,7 +259,7 @@ class ColumnExperiments:
 
         match self.breakthrough_curves.units.flowrate:
             case "BV/h":
-                return [curve.flowrate * self.volume_si / 3600 for curve in filtered_curves]  # Convert to m3/s
+                return [curve.flowrate * self.column_properties.volume_si / 3600 for curve in filtered_curves]  # Convert to m3/s
             case "m3/s":
                 return [curve.flowrate for curve in filtered_curves]
             case _:
@@ -272,11 +280,11 @@ class ColumnExperiments:
 
     def superficial_velocity_si(self, **filter) -> float:
         "Calculates the superficial velocity in m/s."
-        return self.superficial_flowrate_si(filter) / self.column_properties.cross_sectional_area_si
+        return np.array(self.superficial_flowrate_si(**filter)) / self.column_properties.cross_sectional_area_si
     
     def interstitial_velocity_si(self, **filter) -> float:
         "Calculates the interstitial velocity in m/s."
-        return self.superficial_velocity_si(filter) / self.column_properties.porosity
+        return np.array(self.superficial_velocity_si(**filter)) / self.column_properties.porosity
 
     @classmethod
     def from_dict(cls, data: dict) -> "ColumnExperiments":
@@ -487,22 +495,41 @@ class Study:
     isotherm: Isotherm
     kinetics_experiments: list[KineticsExperiment]
 
-    def particle_reynolds(self, **filter) -> list[float]:
-        "Calculates the reynolds number for using the particle diameter for the breaktrhough curves matching the filter."
+    def particle_reynolds(self, curve: BreakthroughCurve = None, **filter) -> list[float]:
+        "Calculates the reynolds number for using the particle diameter for the breakthrough curves matching the filter."
+        if curve is not None:
+            filter.update(asdict(curve))
         curves= self.column_experiments.breakthrough_curves.filter(**filter)
         
         velocities = self.column_experiments.interstitial_velocity_si(**filter)
         dp = self.sorbent_properties.particle_diameter_si
-        rho = [Water(T=curve.T).rho for curve in curves]
-        mu = [Water(T=curve.T).mu for curve in curves]
+        rho = [Water(T=curve.T).rho_mass() for curve in curves]
+        mu = [Water(T=curve.T).mu() for curve in curves]
 
         return rho * velocities * dp / mu
+    
+    def particle_peclet_number(self, curve: BreakthroughCurve = None, **filter) -> list[float]:
+        "calculates the peclet number based on the interstitial velocity for the breakthrough curves matching the filter."
+        if curve is not None:
+            filter.update(asdict(curve))
+        velocities = self.column_experiments.interstitial_velocity_si(**filter)
 
+        return velocities * self.sorbent_properties.particle_diameter_si / D_Li_in_H2O
+
+    def schmidt_number(self,curve: BreakthroughCurve = None,T: float = None) -> float:
+        "Calculates the schmidt number at temperature T (K)."
+        if curve is not None:
+            T = curve.T
+        water = Water(T=T)
+        mu = water.mu()  # Dynamic viscosity in Pa.s
+        rho = water.rho_mass()  # Density in kg/m³
+
+        return mu / (rho * D_Li_in_H2O)
         
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
-        column_expertiments = ColumnExperiments.from_dict(data["ColumnExperiments"])
+        column_experiments = ColumnExperiments.from_dict(data["ColumnExperiments"])
         sorbent_properties = SorbentProperties.from_dict(data["SorbentProperties"])
         isotherm_units = IsothermUnits.from_dict(data["IsothermUnits"])
         isotherm = Isotherm.from_dict(data["Isotherm"], isotherm_units)
@@ -513,7 +540,7 @@ class Study:
         ]
 
         return cls(
-            column_expertiments=column_expertiments,
+            column_experiments=column_experiments,
             sorbent_properties=sorbent_properties,
             isotherm=isotherm,
             kinetics_experiments=kinetics_experiments

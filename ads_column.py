@@ -8,7 +8,6 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 num_nodes=10
-flowrate_idx = 2
 
 def model(num_nodes: int, study: Study) -> do_mpc.model.Model:
     '''
