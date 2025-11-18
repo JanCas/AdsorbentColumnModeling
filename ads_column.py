@@ -29,7 +29,13 @@ def model(num_nodes: int, study: Study, curve: BreakthroughCurve) -> do_mpc.mode
     model.set_rhs('n_i', dn_i_dt)
 
     C_up = vertcat(study.column_experiments.influent_concentration_si(curve), C_Li[:-1])  # Upstream concentration with boundary condition
-    dC_Li_dt = - study.column_experiments.interstitial_velocity_si(curve) / dx * (C_Li - C_up) - (1 - study.column_experiments.column_properties.porosity) / study.column_experiments.column_properties.porosity * study.sorbent_properties.density * dn_i_dt
+    C_down = vertcat(C_Li[1:], C_Li[-1])  # Downstream concentration with boundary condition
+
+    advection_term = - study.column_experiments.interstitial_velocity_si(curve) / dx * (C_Li - C_up) 
+    sorption_term = - (1 - study.column_experiments.column_properties.porosity) / study.column_experiments.column_properties.porosity * study.sorbent_properties.density * dn_i_dt
+    diffusion_term = D_ax / dx**2 * (C_down - 2 * C_Li + C_up)
+
+    dC_Li_dt = advection_term + sorption_term + diffusion_term
 
     model.set_rhs('C_Li', dC_Li_dt)
     model.setup()
@@ -82,10 +88,10 @@ if __name__ == "__main__":
         axes.legend()
         axes.grid()
 
-    pd.DataFrame(simulation_results).to_csv('Results/simulation_results.csv', index=False) 
+    pd.DataFrame(simulation_results).to_csv('Results/diff/simulation_results.csv', index=False) 
     
     fig.tight_layout()
     fig.show()
-    fig.savefig('Results/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
-    fig.savefig('Results/breakthrough_curves_simulation_vs_experimental.svg')
+    fig.savefig('Results/diff/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
+    fig.savefig('Results/diff/breakthrough_curves_simulation_vs_experimental.svg')
     input("End of simulation, press Enter to exit...")
