@@ -592,8 +592,6 @@ class Study:
         Returns:
             Sh: list of Sherwood numbers
         '''
-        if curve is not None:
-            filter.update(asdict(curve))
         
         porosity = self.column_experiments.column_properties.porosity
         Re = self.particle_reynolds(curve, **filter) * porosity
@@ -610,8 +608,6 @@ class Study:
         Returns:
             k_f: list of external mass transfer coefficients in m/s
         '''
-        if curve is not None:
-            filter.update(asdict(curve))
         
         Sh = self.sherwood_kataoka_1972(curve, **filter)
         dp = self.sorbent_properties.particle_diameter_si

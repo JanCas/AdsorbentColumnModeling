@@ -11,3 +11,4 @@ class SimulationResult:
     Peclet_number_axial_column: float
     D_L: float
     Schmidt_number: float
+    Sherwood_number: float
