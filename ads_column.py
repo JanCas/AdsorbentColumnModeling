@@ -25,6 +25,7 @@ def model(num_nodes: int, study: Study, curve: BreakthroughCurve) -> do_mpc.mode
     model = do_mpc.model.Model('continuous')
 
     C_Li = model.set_variable('_x', 'C_Li', shape=(num_nodes,1)) # liquid phase concentration in mol/m^3
+    C_s = model.set_variable("_z", "C_s", shape=(num_nodes,1))  # surface concentration in mol/m^3
     n_i = model.set_variable('_x', 'n_i', shape=(num_nodes,1)) # adsorbed phase concentration in mol/kg
 
     kinetics_exp = study.get_kinetics_experiment_from_curve(curve)
