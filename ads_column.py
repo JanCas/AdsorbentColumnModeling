@@ -21,22 +21,28 @@ def model(num_nodes: int, study: Study, curve: BreakthroughCurve) -> do_mpc.mode
 
     dx = study.column_experiments.column_properties.Length_si / num_nodes
     (D_ax,), _, _ = study.axial_dispersion_coefficient(curve)
+    specific_surface_area = 6 * (1-study.column_experiments.column_properties.porosity) / study.sorbent_properties.particle_diameter_si  # m²/m³
+    external_mass_transfer_coefficient = study.external_mass_transfer_coefficient(curve)[0]  # m/s
 
     model = do_mpc.model.Model('continuous')
 
     C_Li = model.set_variable('_x', 'C_Li', shape=(num_nodes,1)) # liquid phase concentration in mol/m^3
+    C_s = model.set_variable('_x', 'C_s', shape=(num_nodes,1)) # surface concentration in mol/m^2
     n_i = model.set_variable('_x', 'n_i', shape=(num_nodes,1)) # adsorbed phase concentration in mol/kg
 
     kinetics_exp = study.get_kinetics_experiment_from_curve(curve)
 
-    dn_i_dt = kinetics_exp.kinetics_params.k2_si * (study.isotherm.isotherm_fit.q_eq_si(C_Li, kinetics_exp.T) - n_i)**2
+    dn_i_dt = kinetics_exp.kinetics_params.k2_si * (study.isotherm.isotherm_fit.q_eq_si(C_s, kinetics_exp.T) - n_i)**2
     model.set_rhs('n_i', dn_i_dt)
+
+    model.set_rhs('C_s' ,(1e2)*(specific_surface_area * external_mass_transfer_coefficient * (C_Li - C_s) - dn_i_dt * study.sorbent_properties.density * (1 - study.column_experiments.column_properties.porosity)))
 
     C_up = vertcat(study.column_experiments.influent_concentration_si(curve), C_Li[:-1])  # Upstream concentration with boundary condition
     C_down = vertcat(C_Li[1:], C_Li[-1])  # Downstream concentration with boundary condition
 
     advection_term = - study.column_experiments.interstitial_velocity_si(curve) / dx * (C_Li - C_up) 
-    sorption_term = - (1 - study.column_experiments.column_properties.porosity) / study.column_experiments.column_properties.porosity * study.sorbent_properties.density * dn_i_dt
+    #sorption_term = - (1 - study.column_experiments.column_properties.porosity) / study.column_experiments.column_properties.porosity * study.sorbent_properties.density * dn_i_dt
+    sorption_term = - (1 / study.column_experiments.column_properties.porosity) * specific_surface_area * external_mass_transfer_coefficient * (C_Li - C_s)
     diffusion_term = D_ax / dx**2 * (C_down - 2 * C_Li + C_up) * 0
 
     dC_Li_dt = advection_term + sorption_term + diffusion_term
@@ -52,16 +58,23 @@ if __name__ == "__main__":
 
 
     fig, ax = plt.subplots(1,len(s.column_experiments.breakthrough_curves.curves), figsize=(8,4), sharey=True)
-    fig.suptitle('Breakthrough Curves Simulation vs Experimental Data (ADV)')
+    fig.suptitle('Breakthrough Curves Simulation vs Experimental Data (external)')
 
 
     for curve, axes in tqdm(zip(s.column_experiments.breakthrough_curves.curves, ax), desc="Curves", position=0, total=len(s.column_experiments.breakthrough_curves.curves)):
-        
+
+        (D_L,), (Pe_L_d,), (Pe_L,) = s.axial_dispersion_coefficient(curve)
+        sherwood_number = s.sherwood_kataoka_1972(curve)[0]
+
         sr = SimulationResult(
-            curve_uuid=curve.uuid,
+            curve_flowrate=curve.flowrate,
             Reynolds_number=s.particle_reynolds(curve)[0],
-            Peclet_number=s.particle_peclet_number(curve)[0],
-            Schmidt_number=s.schmidt_number(curve)
+            Peclet_number_particle=s.particle_peclet_number(curve)[0],
+            Schmidt_number=s.schmidt_number(curve)[0],
+            D_L=D_L,
+            Peclet_number_axial_particle=Pe_L_d,
+            Peclet_number_axial_column=Pe_L,
+            Sherwood_number=sherwood_number
         )
         simulation_results.append(sr)
 
@@ -74,8 +87,9 @@ if __name__ == "__main__":
         simulator.setup()
         simulator.reset_history()
 
-        simulator.x0['C_Li'] = np.zeros((num_nodes,1)) + .001
-        simulator.x0['n_i'] = np.zeros((num_nodes,1)) + .001
+        simulator.x0['C_Li'] = np.zeros((num_nodes,1)) + 1e-4
+        simulator.x0['n_i'] = np.zeros((num_nodes,1)) + 1e-4
+        simulator.x0['C_s'] = np.zeros((num_nodes,1)) + 1e-4
         for i in tqdm(range(int(curve.run_length_hours * 3600)), desc=f"Simulating {curve.flowrate} BV/h", position=1, leave=False):
             simulator.make_step()  # Advance the simulation by one time step
 
@@ -92,10 +106,11 @@ if __name__ == "__main__":
         axes.legend()
         axes.grid()
 
-    pd.DataFrame(simulation_results).to_csv(r'Results/adv/simulation_results.csv', index=False) 
+    pd.DataFrame(simulation_results).to_csv(r'Results/external/simulation_results.csv', index=False) 
     
     fig.tight_layout()
     fig.show()
-    fig.savefig(r'Results/adv/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
-    fig.savefig(r'Results/adv/breakthrough_curves_simulation_vs_experimental.svg')
+    fig.savefig(r'Results/external/breakthrough_curves_simulation_vs_experimental.png', dpi=1000)
+    fig.savefig(r'Results/external/breakthrough_curves_simulation_vs_experimental.svg')
+    print(pd.DataFrame(simulation_results))
     input("End of simulation, press Enter to exit...")

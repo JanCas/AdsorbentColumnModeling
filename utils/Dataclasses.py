@@ -10,7 +10,7 @@ import uuid
 from pyEQL import Solution
 
 Li_MW = 6.94  # g/mol
-D_Li_in_H2O = lambda T: Solution(temperature=f'{T}K').get_property("Li+", "transport.diffusion_coefficient").magnitude  # m²/s
+D_Li_in_H2O = lambda T,c: Solution({"Li+": f"{c} mol/m^3"}, temperature=f'{T}K').get_diffusion_coefficient("Li+").magnitude  # m²/s
 ideal_gas_constant = 8.314  # J/(mol·K)
 
 def convert_mg_per_L_to_mol_per_m3(concentration_mg_per_L: float | np.ndarray) -> float | np.ndarray:
@@ -353,7 +353,6 @@ class BaseIsothermFit(ABC):
 
     @abstractmethod
     def q_eq_si(self, C_eq_si: float) -> float:
-        print("Here")
         ...
 
 @dataclass(frozen=True)
@@ -532,7 +531,8 @@ class Study:
             filter.update(asdict(curve))
         velocities = self.column_experiments.interstitial_velocity_si(**filter)
         temperatures = [curve.T for curve in self.column_experiments.breakthrough_curves.filter(**filter)]
-        D_Li_in_H2O_list = [D_Li_in_H2O(T) for T in temperatures]
+        concentrations = self.column_experiments.influent_concentration_si(**filter)
+        D_Li_in_H2O_list = [D_Li_in_H2O(T, c) for T,c in zip(temperatures, concentrations)]
 
         return velocities * self.sorbent_properties.particle_diameter_si / D_Li_in_H2O_list
 
@@ -548,7 +548,8 @@ class Study:
         water = [Water(T=temp) for temp in T]
         mu = [w.mu() for w in water]  # Dynamic viscosity in Pa.s
         rho = [w.rho_mass() for w in water]  # Density in kg/m³
-        D_Li_in_H2O_list = [D_Li_in_H2O(temp) for temp in T]
+        concentration = self.column_experiments.influent_concentration_si(curve, T=T[0])
+        D_Li_in_H2O_list = [D_Li_in_H2O(temp, c) for temp, c in zip(T, concentration)]
 
         return np.array(mu) / (np.array(rho) * np.array(D_Li_in_H2O_list))
 
@@ -584,7 +585,37 @@ class Study:
 
         return D_L, Pe_L_d, Pe_L
 
+    def sherwood_kataoka_1972(self, curve: BreakthroughCurve = None, **filter) -> list[float]:
+        '''
+        Calculates the Sherwood number using the correlation from Kataoka 1972 for the breakthrough curves matching the filter.
 
+        Returns:
+            Sh: list of Sherwood numbers
+        '''
+        
+        porosity = self.column_experiments.column_properties.porosity
+        Re = self.particle_reynolds(curve, **filter) * porosity
+        Sc = self.schmidt_number(curve, **filter)
+
+        Sh = 1.85 * ((1-porosity) / porosity)**(1/3) * Re**(1/3) * Sc**(1/3)
+
+        return Sh
+
+    def external_mass_transfer_coefficient(self, curve: BreakthroughCurve = None, **filter) -> list[float]:
+        '''
+        Calculates the external mass transfer coefficient (k_f) for the breakthrough curves matching the filter.
+
+        Returns:
+            k_f: list of external mass transfer coefficients in m/s
+        '''
+        
+        Sh = self.sherwood_kataoka_1972(curve, **filter)
+        dp = self.sorbent_properties.particle_diameter_si
+        D_Li_in_H2O_list = [D_Li_in_H2O(curve.T, c) for curve, c in zip(self.column_experiments.breakthrough_curves.filter(**filter), self.column_experiments.influent_concentration_si(curve, **filter))]
+
+        k_f = Sh * np.array(D_Li_in_H2O_list) / dp
+
+        return k_f
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
