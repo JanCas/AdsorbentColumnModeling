@@ -122,6 +122,71 @@
         }
     },
     "zhongLiAdsorptionPerformance2021":{
+        "IsothermUnits":{
+            "C_e": "mg/L",
+            "q_e": "mg/g",
+            "T": "K"
+        },
+        "Isotherm":{
+
+        },
+        "KineticsUnits":{
+            "time": "min",
+            "q_t": "mg/g",
+            "T": "K",
+            "C_e": "mg/L"
+        },
+        "KineticsExperiments":[
+            {
+                "T": 298,
+                "C_e": 399,
+                "Ph": 7.0,
+                "time":[0, 0, 0.5464480874316919, 3.8251366120218577, 4.644808743169399, 14.754098360655732, 30.054644808743163, 44.53551912568305, 59.83606557377048, 90.1639344262295, 120.49180327868851, 240.7103825136612],
+                "q_t":[0, 0, 4.063859423550841, 4.625093753348334, 5.343833708346727, 6.413086181649344, 6.448301725061608, 6.6144505160898595, 6.767313118325653, 7.060037858494944, 7.14361227186685, 7.125254473374044],
+                "FitType": "PseudoSecondOrder",
+                "FitParameters": {
+                    "k2": 0.0333,
+                    "q_e": 7.3533,
+                    "k2_units": "g/mg/min",
+                    "q_e_units": "mg/g"
+                },
+                "Notes":"Taken from the L/S = 60 curve"
+            }
+        ],
+        "SorbentProperties":{
+            "density": "NA",
+            "density_units": "kg/m3",
+            "particle_diameter": 150e-6,
+            "particle_diameter_units": "m",
+            "Notes": "These values are inferred, only the particle diameter is given"
+        },
+        "ColumnExperiments":{
+            "Properties":{
+                "Length":0.1,
+                "Length_units":"m",
+                "Diameter":0.01,
+                "Diameter_units":"m",
+                "porosity":0.35
+            },
+            "BreakthroughCurves":{
+                "Units":{
+                    "flowrate": "BV/min",
+                    "T": "K",
+                    "influent_concentration": "mg/L"
+                },
+                "Curves":[
+                    {
+                        "flowrate": 0.3,
+                        "T": 298,
+                        "PH": 7.0,
+                        "influent_concentration": 399,
+                        "BV":[0.02024389599175258, 1.549076578759549, 2.981756262611132, 4.481743045704066, 6.059907834101383, 10.599078341013826, 12.142857142857146, 13.612431822787713, 15.184331797235025],
+                        "C_out/C_in":[0.4437550456766516, 0.6709008641697594, 0.7509362037879638, 0.8263038380657319, 0.8499999999999998, 0.929411764705882, 0.9470588235294115, 0.9918567465227006, 0.9970588235294114],
+                        "Notes": "Temperature and pH not specified in the original publication; assumed to be room temperature and neutral pH."
+                    }
+                ]        
+            }
+        }
 
     }
 }
