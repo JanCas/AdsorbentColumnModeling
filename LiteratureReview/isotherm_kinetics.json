@@ -128,7 +128,20 @@
             "T": "K"
         },
         "Isotherm":{
-
+            "T": 298,
+            "Ph": 7.0,
+            "C_e":[50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],
+            "C_e_units": "mg/L",
+            "q_e":[2.5, 4.8, 7.5, 9.5, 11.2, 12.5, 13.5, 14.3, 15.0, 15.6, 16.0],
+            "q_e_units": "mg/g",
+            "FitType": "Sips",
+            "FitParameters": {
+                "q_max": 7.9042,
+                "K_s": 0.4956,
+                "m": 0.7614,
+                "q_max_units": "mg/g",
+                "K_L_units": "L/mg"
+            }
         },
         "KineticsUnits":{
             "time": "min",

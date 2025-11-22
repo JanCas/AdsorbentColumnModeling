@@ -17,11 +17,11 @@ if __name__ == "__main__":
     #     Schmidt_number=study.schmidt_number(curves[0])
     # )
 
-    concentration = study.column_experiments.influent_concentration_si(curves[0])
+    # concentration = study.column_experiments.influent_concentration_si(curves[0])
 
-    print(Solution({"Li+": f"{concentration} mol/m^3"}, temperature='350K').get_diffusion_coefficient('Li+'))
-    print(Solution({"Li+": f"{concentration*2} mol/m^3"}, temperature='350K').get_diffusion_coefficient('Li+'))
-    print(Solution(temperature='350K').get_diffusion_coefficient('Li+'))
+    # print(Solution({"Li+": f"{concentration} mol/m^3"}, temperature='350K').get_diffusion_coefficient('Li+'))
+    # print(Solution({"Li+": f"{concentration*2} mol/m^3"}, temperature='350K').get_diffusion_coefficient('Li+'))
+    # print(Solution(temperature='350K').get_diffusion_coefficient('Li+'))
     
 
     
@@ -30,11 +30,12 @@ if __name__ == "__main__":
 
     # print(sr)
 
-    print(study.column_experiments.superficial_velocity_si(curves[0]))
-    print(study.column_experiments.interstitial_velocity_si())
-    print(study.particle_reynolds())
-    print(study.schmidt_number(T=303))
-    print(study.particle_peclet_number(T=303))
-    print(study.axial_dispersion_coefficient())
-    print(study.sherwood_kataoka_1972())
-    print(study.external_mass_transfer_coefficient())
+    # print(study.column_experiments.superficial_velocity_si(curves[0]))
+    # print(study.column_experiments.interstitial_velocity_si())
+    # print(study.particle_reynolds())
+    # print(study.schmidt_number(T=303))
+    # print(study.particle_peclet_number(T=303))
+    # print(study.axial_dispersion_coefficient())
+    # print(study.sherwood_kataoka_1972())
+    # print(study.external_mass_transfer_coefficient())
+    print(pd.read_csv('Results/external/simulation_results.csv'))

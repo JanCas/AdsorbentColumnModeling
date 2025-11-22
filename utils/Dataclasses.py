@@ -369,7 +369,38 @@ class SipsIsothermFit(BaseIsothermFit):
 
     @property
     def K_s_si(self) -> float:
-        ...
+        """
+        Converts the Sips isotherm parameter K_s to SI units (m³/mol).
+        """
+        match self.K_s_units:
+            case "L/mg":
+                return self.K_s * Li_MW  # Convert to m³/mol
+            case "m3/mol":
+                return self.K_s
+            case _:
+                raise ValueError(f"Unsupported K_s units: {self.K_s_units}")
+            
+    @property
+    def Q_max_si(self) -> float:
+        """
+        Converts the Sips isotherm parameter Q_max to SI units (mol/kg).
+        """
+        match self.Q_max_units:
+            case "mg/g":
+                return convert_mg_per_g_to_mol_per_kg(self.Q_max)
+            case "mol/kg":
+                return self.Q_max
+            case _:
+                raise ValueError(f"Unsupported Q_max units: {self.Q_max_units}")
+            
+    def q_eq_si(self, C_eq_si: float) -> float:
+        """
+        Calculates the equilibrium uptake (q_eq) in mol/kg using the Sips isotherm model.
+        C_eq_si: Equilibrium concentration in mol/m³
+        Returns q_eq in mol/kg
+        """
+        q_e = (self.Q_max_si * (self.K_s_si * C_eq_si) ** self.n) / (1 + (self.K_s_si * C_eq_si) ** self.n)
+        return q_e
 
 @dataclass(frozen=True)
 class TemkinIsothermFit(BaseIsothermFit):
@@ -426,7 +457,8 @@ class TemkinIsothermFit(BaseIsothermFit):
 
 
 IsothermFitDirectory = {
-    TemkinIsothermFit.fit_type: TemkinIsothermFit
+    TemkinIsothermFit.fit_type: TemkinIsothermFit,
+    SipsIsothermFit.fit_type: SipsIsothermFit
 }  
 
 @dataclass(frozen=True)
@@ -482,6 +514,8 @@ class Isotherm:
         match data["FitType"]:
             case "Temkin":
                 isotherm_fit = TemkinIsothermFit.from_dict(data["FitParameters"])
+            case "Sips":
+                isotherm_fit = SipsIsothermFit.from_dict(data["FitParameters"])
             case _:
                 raise ValueError(f"Unsupported FitType: {data['FitType']}")
 
