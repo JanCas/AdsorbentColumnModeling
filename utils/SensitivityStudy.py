@@ -7,6 +7,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
 
 from SALib.sample import sobol as sobol_sample, morris as morris_sample
 from SALib.analyze import sobol, morris
@@ -26,14 +29,22 @@ class SensitivityAnalyzer:
     """
     Utility class for performing sensitivity analysis on model functions.
     Uses SALib for Sobol and Morris methods.
-    
+
     Usage with function:
         analyzer = SensitivityAnalyzer(
             model_func=my_model,
             parameters={'k': 1.0, 'n': 2.0},
             bounds={'k': (0.1, 10), 'n': (1, 5)}
         )
-        
+
+    Usage with log-scale parameters:
+        analyzer = SensitivityAnalyzer(
+            model_func=my_model,
+            parameters={'k': 1.0, 'n': 2.0},
+            bounds={'k': (-1, 1), 'n': (1, 5)},  # k bounds are in log10: 10^-1 to 10^1 (0.1 to 10)
+            parameters_log_scale=['k']
+        )
+
     Usage with class instance:
         analyzer = SensitivityAnalyzer(
             model=my_model_instance,
@@ -41,15 +52,40 @@ class SensitivityAnalyzer:
             parameters={'k': 1.0, 'n': 2.0},
             bounds={'k': (0.1, 10), 'n': (1, 5)}
         )
+
+    Usage with fixed parameters:
+        analyzer = SensitivityAnalyzer(
+            model_func=my_model,
+            parameters={'k': 1.0, 'n': 2.0},  # Parameters to vary
+            bounds={'k': (0.1, 10), 'n': (1, 5)},
+            fixed_params={'temperature': 298.15, 'pressure': 101.325}  # Fixed params
+        )
+
+    Args:
+        parameters: Dict of parameter names and base values for sensitivity analysis
+        bounds: Dict of parameter bounds (min, max) for each parameter.
+                For log-scale parameters, provide bounds in log10 space
+                (e.g., [-2, 2] for bounds from 0.01 to 100)
+        parameters_log_scale: Optional list of parameter names to vary in log scale.
+                             Bounds for these parameters should be in log10 space.
+        model_func: Optional function to analyze (alternative to model/method)
+        model: Optional model instance (alternative to model_func)
+        method: Method name to call on model instance (default: 'run')
+        fixed_params: Optional dict of fixed parameters to pass to the model
+                     but not vary during sensitivity analysis
+        n_workers: Number of parallel workers for evaluation (default: min(4, cpu_count))
     """
     
     def __init__(
         self,
         parameters: Dict[str, float],
         bounds: Dict[str, tuple],
+        parameters_log_scale: Optional[List[str]] = None,
         model_func: Optional[Callable] = None,
         model: Optional[object] = None,
         method: str = 'run',
+        fixed_params: Optional[Dict[str, any]] = None,
+        n_workers: Optional[int] = None,
     ):
         if model_func is None and model is None:
             raise ValueError("Must provide either model_func or model")
@@ -64,34 +100,94 @@ class SensitivityAnalyzer:
             self.model_func = model_func
         
         self.parameters = parameters.copy()
+        self.parameters_log_scale = parameters_log_scale.copy() if parameters_log_scale else []
         self.bounds = bounds.copy()
+        self.fixed_params = fixed_params.copy() if fixed_params else {}
         self._param_names = list(parameters.keys())
+        self.n_workers = n_workers if n_workers is not None else min(4, multiprocessing.cpu_count())
         self._validate()
-        
-        # SALib problem definition
+
+        # Transform bounds to log space for log-scale parameters
+        transformed_bounds = []
+        for name in self._param_names:
+            if name in self.parameters_log_scale:
+                lower, upper = self.bounds[name]
+                transformed_bounds.append([10**lower, 10**upper])
+            else:
+                transformed_bounds.append(list(self.bounds[name]))
+
+        # SALib problem definition (uses log-transformed bounds for log-scale params)
         self.problem = {
             'num_vars': len(self._param_names),
             'names': self._param_names,
-            'bounds': [list(bounds[name]) for name in self._param_names],
+            'bounds': transformed_bounds,
         }
     
     def _validate(self):
         missing = set(self.parameters.keys()) - set(self.bounds.keys())
         if missing:
             raise ValueError(f"Missing bounds for parameters: {missing}")
+
+        # Check for overlapping parameter names
+        overlap = set(self.parameters.keys()) & set(self.fixed_params.keys())
+        if overlap:
+            raise ValueError(f"Parameter names overlap between sensitivity and fixed params: {overlap}")
+        
+        # Check log-scale parameters
+        if self.parameters_log_scale:
+            if not set(self.parameters_log_scale).issubset(self.parameters):
+                raise ValueError("parameters_log_scale must be a subset of parameters")
     
     def _evaluate(self, params: Dict[str, float]) -> float:
-        result = self.model_func(**params)
+        # No transformation needed - SALib already provides values in linear space
+        # (log-scale parameters had their bounds transformed in __init__)
+
+        # Merge sensitivity params with fixed params
+        all_params = {**self.fixed_params, **params}
+        result = self.model_func(**all_params)
         if isinstance(result, np.ndarray):
             return np.mean(result)
         return float(result)
     
-    def _evaluate_samples(self, X: np.ndarray) -> np.ndarray:
-        """Evaluate model for all rows in sample matrix X."""
+    def _evaluate_samples(self, X: np.ndarray, parallel: bool = True) -> np.ndarray:
+        """Evaluate model for all rows in sample matrix X using parallel processing.
+
+        Args:
+            X: Sample matrix where each row is a parameter set
+            parallel: Whether to use parallel processing (default: True)
+
+        Returns:
+            Array of model outputs
+        """
         Y = np.zeros(X.shape[0])
-        for i, row in enumerate(X):
-            params = dict(zip(self._param_names, row))
-            Y[i] = self._evaluate(params)
+
+        if not parallel or self.n_workers == 1:
+            # Sequential evaluation
+            for i, row in enumerate(tqdm(X, desc="Evaluating samples", leave=False)):
+                params = dict(zip(self._param_names, row))
+                Y[i] = self._evaluate(params)
+        else:
+            # Parallel evaluation
+            def evaluate_single(idx_row):
+                """Helper function to evaluate a single parameter set."""
+                idx, row = idx_row
+                params = dict(zip(self._param_names, row))
+                return idx, self._evaluate(params)
+
+            # Use ThreadPoolExecutor for parallel evaluation
+            with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
+                # Submit all tasks
+                futures = {executor.submit(evaluate_single, (i, row)): i
+                          for i, row in enumerate(X)}
+
+                # Process results as they complete with progress bar
+                with tqdm(total=len(X), desc=f"Evaluating samples (n_workers={self.n_workers})",
+                         leave=False) as pbar:
+                    for future in as_completed(futures):
+                        idx, result = future.result()
+                        Y[idx] = result
+                        pbar.update(1)
+
         return Y
     
     # -------------------------------------------------------------------------
@@ -110,19 +206,26 @@ class SensitivityAnalyzer:
         params_to_analyze = parameters or self._param_names
         base_output = self._evaluate(self.parameters)
         results = {}
-        
-        for param in params_to_analyze:
+
+        for param in tqdm(params_to_analyze, desc="OAT analysis", leave=False):
             lower, upper = self.bounds[param]
-            values = np.linspace(lower, upper, n_points)
+
+            # Use log spacing for log-scale parameters
+            if param in self.parameters_log_scale:
+                # Bounds are in log10 space, create log-spaced values in linear space
+                values = np.logspace(lower, upper, n_points)
+            else:
+                values = np.linspace(lower, upper, n_points)
+
             outputs = np.zeros(n_points)
-            
-            for i, val in enumerate(values):
+
+            for i, val in enumerate(tqdm(values, desc=f"  Testing {param}", leave=False)):
                 test_params = self.parameters.copy()
                 test_params[param] = val
                 outputs[i] = self._evaluate(test_params)
-            
+
             sensitivity = (outputs.max() - outputs.min()) / abs(base_output) if base_output != 0 else 0
-            
+
             results[param] = OATResult(
                 parameter=param,
                 base_value=self.parameters[param],
@@ -130,7 +233,7 @@ class SensitivityAnalyzer:
                 values_tested=values,
                 outputs=outputs,
             )
-        
+
         return results
     
     def local_sensitivity(self, delta: float = 0.01) -> Dict[str, float]:
@@ -140,18 +243,18 @@ class SensitivityAnalyzer:
         """
         base_output = self._evaluate(self.parameters)
         sensitivities = {}
-        
-        for param, base_val in self.parameters.items():
+
+        for param, base_val in tqdm(self.parameters.items(), desc="Local sensitivity", leave=False):
             perturbed = self.parameters.copy()
             h = base_val * delta if base_val != 0 else delta
             perturbed[param] = base_val + h
             perturbed_output = self._evaluate(perturbed)
-            
+
             if base_output != 0 and base_val != 0:
                 sensitivities[param] = ((perturbed_output - base_output) / base_output) / (h / base_val)
             else:
                 sensitivities[param] = (perturbed_output - base_output) / h
-        
+
         return sensitivities
     
     def sobol(
@@ -162,19 +265,22 @@ class SensitivityAnalyzer:
     ) -> Dict:
         """
         Sobol variance-based global sensitivity analysis using SALib.
-        
+
         Args:
             n_samples: Base sample size.
             calc_second_order: Calculate second-order indices.
             seed: Random seed (sets numpy random state).
-            
+
         Returns:
             SALib results dict with S1, ST, S1_conf, ST_conf, etc.
         """
         if seed is not None:
             np.random.seed(seed)
+        print(f"Generating Sobol samples (n={n_samples})...")
         X = sobol_sample.sample(self.problem, n_samples, calc_second_order=calc_second_order)
+        print(f"Evaluating {len(X)} model runs...")
         Y = self._evaluate_samples(X)
+        print("Analyzing Sobol indices...")
         return sobol.analyze(self.problem, Y, calc_second_order=calc_second_order)
     
     def morris(
@@ -185,17 +291,20 @@ class SensitivityAnalyzer:
     ) -> Dict:
         """
         Morris method (Elementary Effects) using SALib.
-        
+
         Args:
             n_trajectories: Number of trajectories.
             n_levels: Number of grid levels.
             seed: Random seed.
-            
+
         Returns:
             SALib results dict with mu, mu_star, sigma, mu_star_conf.
         """
+        print(f"Generating Morris trajectories (n={n_trajectories}, levels={n_levels})...")
         X = morris_sample.sample(self.problem, n_trajectories, num_levels=n_levels, seed=seed)
+        print(f"Evaluating {len(X)} model runs...")
         Y = self._evaluate_samples(X)
+        print("Analyzing Morris elementary effects...")
         return morris.analyze(self.problem, X, Y)
     
     # -------------------------------------------------------------------------
@@ -432,49 +541,88 @@ class SensitivityAnalyzer:
 # -----------------------------------------------------------------------------
 # Test / Example
 # -----------------------------------------------------------------------------
-if __name__ == "__main__":
-    class AdsorptionModel:
-        def __init__(self, column_length: float):
-            self.column_length = column_length
-        
-        def run(self, k, n, D, q_max):
-            x = np.linspace(0, self.column_length, 100)
-            return np.mean(q_max * k * x**n * np.exp(-D * x))
+# if __name__ == "__main__":
+#     class AdsorptionModel:
+#         def __init__(self, column_length: float):
+#             self.column_length = column_length
+
+#         def run(self, k, n, D, q_max, temperature=None, pressure=None):
+#             # temperature and pressure are fixed params, used if provided
+#             x = np.linspace(0, self.column_length, 100)
+#             result = np.mean(q_max * k * x**n * np.exp(-D * x))
+#             # Example of using fixed params (if provided)
+#             if temperature:
+#                 result *= (298.15 / temperature)  # temperature correction
+#             return result
+
+#     model = AdsorptionModel(column_length=10.0)
+
+#     # Example 1: Without fixed parameters
+#     analyzer = SensitivityAnalyzer(
+#         model=model,
+#         method='run',
+#         parameters={'k': 1.0, 'n': 0.5, 'D': 0.1, 'q_max': 5.0},
+#         bounds={'k': (0.1, 5), 'n': (0.1, 2), 'D': (0.01, 1), 'q_max': (1, 10)},
+#     )
+
+#     # Example 2: With fixed parameters
+#     analyzer_with_fixed = SensitivityAnalyzer(
+#         model=model,
+#         method='run',
+#         parameters={'k': 1.0, 'n': 0.5},  # Only these vary
+#         bounds={'k': (0.1, 5), 'n': (0.1, 2)},
+#         fixed_params={'D': 0.1, 'q_max': 5.0, 'temperature': 300.0}  # These are fixed
+#     )
+
+#     # Example 3: With log-scale parameters (for parameters varying over orders of magnitude)
+#     analyzer_with_log = SensitivityAnalyzer(
+#         model=model,
+#         method='run',
+#         parameters={'k': 1.0, 'n': 0.5, 'D': -1, 'q_max': 5.0},  # D=-1 means 10^-1 = 0.1
+#         bounds={'k': (-2, 2), 'n': (0.1, 2), 'D': (-3, 1), 'q_max': (1, 10)},  # k: 0.01-100, D: 0.001-10
+#         parameters_log_scale=['k', 'D']  # These will be sampled in log space
+#     )
     
-    model = AdsorptionModel(column_length=10.0)
+#     # OAT
+#     print("=== Example 1: Without Fixed Parameters ===")
+#     print("Analyzing all 4 parameters: k, n, D, q_max")
+#     oat = analyzer.one_at_a_time(n_points=20)
+#     for name, res in oat.items():
+#         print(f"{name}: S = {res.sensitivity_index:.3f}")
+#     analyzer.plot_tornado(oat).savefig('tornado.png', dpi=150)
+#     analyzer.plot_oat_curves(oat, ncols=2).savefig('oat_curves.png', dpi=150)
+
+#     print("\n=== Example 2: With Fixed Parameters ===")
+#     print("Analyzing only k and n, with D, q_max, and temperature fixed")
+#     oat_fixed = analyzer_with_fixed.one_at_a_time(n_points=20)
+#     for name, res in oat_fixed.items():
+#         print(f"{name}: S = {res.sensitivity_index:.3f}")
+
+#     print("\n=== Example 3: With Log-Scale Parameters ===")
+#     print("Analyzing k and D in log-scale (they vary over orders of magnitude)")
+#     oat_log = analyzer_with_log.one_at_a_time(n_points=10)
+#     for name, res in oat_log.items():
+#         print(f"{name}: S = {res.sensitivity_index:.3f}")
+#         if name in analyzer_with_log.parameters_log_scale:
+#             print(f"      (sampled in log space: {res.values_tested[0]:.4f} to {res.values_tested[-1]:.4f})")
+
+#     # Local
+#     print("\n=== Local Sensitivity ===")
+#     local = analyzer.local_sensitivity()
+#     for name, val in local.items():
+#         print(f"{name}: {val:.3f}")
     
-    analyzer = SensitivityAnalyzer(
-        model=model,
-        method='run',
-        parameters={'k': 1.0, 'n': 0.5, 'D': 0.1, 'q_max': 5.0},
-        bounds={'k': (0.1, 5), 'n': (0.1, 2), 'D': (0.01, 1), 'q_max': (1, 10)},
-    )
+#     # Morris
+#     print("\n=== Morris Method ===")
+#     morris_res = analyzer.morris(n_trajectories=20, seed=42)
+#     print(analyzer.morris_to_dataframe(morris_res).to_string(index=False))
+#     analyzer.plot_morris(morris_res).savefig('morris_scatter.png', dpi=150)
+#     analyzer.plot_morris_bars(morris_res).savefig('morris_bars.png', dpi=150)
     
-    # OAT
-    print("=== One-at-a-Time ===")
-    oat = analyzer.one_at_a_time(n_points=20)
-    for name, res in oat.items():
-        print(f"{name}: S = {res.sensitivity_index:.3f}")
-    analyzer.plot_tornado(oat).savefig('tornado.png', dpi=150)
-    analyzer.plot_oat_curves(oat, ncols=2).savefig('oat_curves.png', dpi=150)
+#     # Sobol
+#     print("\n=== Sobol Indices ===")
+#     sobol_res = analyzer.sobol(n_samples=512, seed=42)
+#     print(analyzer.sobol_to_dataframe(sobol_res).to_string(index=False))
+#     analyzer.plot_sobol(sobol_res).savefig('sobol.png', dpi=150)
     
-    # Local
-    print("\n=== Local Sensitivity ===")
-    local = analyzer.local_sensitivity()
-    for name, val in local.items():
-        print(f"{name}: {val:.3f}")
-    
-    # Morris
-    print("\n=== Morris Method ===")
-    morris_res = analyzer.morris(n_trajectories=20, seed=42)
-    print(analyzer.morris_to_dataframe(morris_res).to_string(index=False))
-    analyzer.plot_morris(morris_res).savefig('morris_scatter.png', dpi=150)
-    analyzer.plot_morris_bars(morris_res).savefig('morris_bars.png', dpi=150)
-    
-    # Sobol
-    print("\n=== Sobol Indices ===")
-    sobol_res = analyzer.sobol(n_samples=512, seed=42)
-    print(analyzer.sobol_to_dataframe(sobol_res).to_string(index=False))
-    analyzer.plot_sobol(sobol_res).savefig('sobol.png', dpi=150)
-    
-    print("\nAll plots saved.")
+#     print("\nAll plots saved.")

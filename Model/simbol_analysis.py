@@ -19,10 +19,11 @@ problem = {
     "num_vars": 3,
     "names": ["log10_phi_star", "log10_Da2_star", "Lambda_star"],
     "bounds": [
-        [-1.0,  2.0],   # φ* ∈ [0.1, 100]
-        [-2.0,  2.0],   # Da2* ∈ [1e−2, 1e2]
+        [.01,  100],   # φ* ∈ [0.1, 100]
+        [.01,  100],   # Da2* ∈ [1e−2, 1e2]
         [ 0.5,  5.0],   # Λ* ∈ [0.5, 5]  (tune to your system)
     ],
+    "dists": ["logunif", "logunif", "unif"]
 }
 
 pretty_names = [r"$\phi^\ast$", r"$\mathrm{Da}_2^\ast$", r"$\Lambda^\ast$"]
@@ -33,17 +34,17 @@ pretty_names = [r"$\phi^\ast$", r"$\mathrm{Da}_2^\ast$", r"$\Lambda^\ast$"]
 # --------------------------------------------------
 
 def run_model_from_sample(log10_phi_star, log10_Da2_star, Lambda_star):
-    phi_star = 10.0 ** log10_phi_star
-    Da2_star = 10.0 ** log10_Da2_star
+    # phi_star = 10.0 ** log10_phi_star
+    # Da2_star = 10.0 ** log10_Da2_star
 
     tau_star_break, _, _ = simulate_column_temkin_star(
-        phi_star=phi_star,
-        Da2_star=Da2_star,
+        phi_star=log10_phi_star,
+        Da2_star=log10_Da2_star,
         Lambda_star=Lambda_star,
         eps=0.4,
         Nx=100,
-        tau_star_max=15.0,
-        C_star_thresh=0.99,
+        tau_star_max=100,
+        C_star_thresh=0.5,
         cfl=0.5,
         store_history=False,
     )
@@ -90,7 +91,7 @@ def plot_sobol_indices(df, filename="sobol_indices_temkin_star_99.png"):
 if __name__ == "__main__":
     print("Generating Saltelli samples...")
 
-    N = 512  # base sample size
+    N = 100  # base sample size
     param_values = saltelli.sample(problem, N, calc_second_order=False)
 
     print(f"Total model evaluations: {param_values.shape[0]}")
@@ -104,9 +105,10 @@ if __name__ == "__main__":
             phi_star = 10.0 ** log10_phi_star
             Da2_star = 10.0 ** log10_Da2_star
             pbar.set_postfix({
-            "phi*":     f"{phi_star:.3g}",
-            "Da2*":     f"{Da2_star:.3g}",
+            "phi*":     f"{log10_phi_star:.3g}",
+            "Da2*":     f"{log10_Da2_star:.3g}",
             "Lambda*":  f"{Lambda_star:.3g}",
+            "tau*_break": f"{Y[i]:.3g}",
         })
             pbar.update(1)
 

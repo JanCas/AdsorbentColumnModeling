@@ -31,7 +31,7 @@ def simulate_column_temkin_star(
     Da2_star: float,
     Lambda_star: float,
     eps: float = 0.4,
-    Nx: int = 200,
+    Nx: int = 100,
     tau_star_max: float = 15.0,
     C_star_thresh: float = 0.05,
     cfl: float = 0.5,
@@ -149,5 +149,9 @@ def simulate_column_temkin_star(
     if store_history:
         C_star_hist = C_star_hist[:k_eff+1, :]
         n_star_hist = n_star_hist[:k_eff+1, :]
+
+    # if not store_history:
+    #     return tau_star_break
+
 
     return tau_star_break, C_star_hist, n_star_hist

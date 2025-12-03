@@ -650,6 +650,9 @@ class Study:
         k_f = Sh * np.array(D_Li_in_H2O_list) / dp
 
         return k_f
+    
+    def non_dim_numbers():
+        pass
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
