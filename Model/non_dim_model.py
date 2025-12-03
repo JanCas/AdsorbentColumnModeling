@@ -25,6 +25,10 @@ def n_eq_star_temkin(C_star: np.ndarray | float, Lambda_star: float) -> np.ndarr
     C_safe = np.clip(C_arr, 1e-30, None)  # avoid log(0)
     return 1.0 + np.log(C_safe) / Lambda_star
 
+def n_eq_star_langmuir(C_star: np.ndarray | float, Lambda_star: float) -> np.ndarray:
+    C_arr = np.asarray(C_star, dtype=float)
+    return (1.0 + Lambda_star)*C_star / (1 + Lambda_star * C_arr)
+
 
 def simulate_column_temkin_star(
     phi_star: float,
@@ -111,7 +115,7 @@ def simulate_column_temkin_star(
         C_star[0] = 1.0
 
         # Equilibrium loading
-        n_eq_star = n_eq_star_temkin(C_star, Lambda_star)
+        n_eq_star = n_eq_star_langmuir(C_star, Lambda_star)
 
         # Kinetics: n*_tau
         n_star_tau = Da2_star * (n_eq_star - n_star) ** 2

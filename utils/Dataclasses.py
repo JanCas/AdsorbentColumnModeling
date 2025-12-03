@@ -651,8 +651,35 @@ class Study:
 
         return k_f
     
-    def non_dim_numbers():
-        pass
+    def non_dim_numbers(self, epsilon: float = None, C_0: float = None) -> tuple[list[float], list[float]]:
+        """
+            This function returns 2 different non dimensional numbers to give and order or magnitude 
+            for designing the sensitivity analysis:
+            
+            parameters:
+                - epsilon: bed porosity
+                - C_0: influent concentration (mol/m^3)
+            
+            returns:
+                - capacity factor (PI1) =  (1-epsilon)*rho_b*q_0(@C_0) / (epsilon*C_0)
+                - Damkohler number (PI2) = k_s * q_0(@C_0) * L / u_0
+        """
+        if C_0 is None:
+            # retrieve the C_0 from the breakthrough curves in the study object
+            C_0 = self.column_experiments.influent_concentration_si()
+
+        if epsilon is None:
+            # retrieve the epsilon from the column properties in the study object
+            epsilon = self.column_experiments.column_properties.porosity
+
+        q_0 = self.isotherm.isotherm_fit.q_eq_si(C_0, self.isotherm.T)
+        k_s = [k_s.kinetics_params.k2_si for k_s in self.kinetics_experiments]
+
+        capacity_factors = (1-epsilon) / epsilon * self.sorbent_properties.density_si * q_0 / C_0
+
+        damkohler_numbers = k_s * q_0 * self.column_experiments.column_properties.Length_si / self.column_experiments.interstitial_velocity_si()
+
+        return capacity_factors, damkohler_numbers
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
