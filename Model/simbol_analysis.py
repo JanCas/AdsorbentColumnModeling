@@ -23,7 +23,7 @@ problem = {
         [.01,  10],   # Da2* ∈ [1e−2, 1e2]
         [.1,  10],   # Λ* ∈ [0.5, 5]  (tune to your system)
     ],
-    "dists": ["logunif", "logunif", "unif"]
+    "dists": ["unif", "unif", "unif"]
 }
 
 pretty_names = [r"$\phi^\ast$", r"$\mathrm{Da}_2^\ast$", r"$\Lambda^\ast$"]
@@ -35,7 +35,7 @@ pretty_names = [r"$\phi^\ast$", r"$\mathrm{Da}_2^\ast$", r"$\Lambda^\ast$"]
 
 def run_model_from_sample(log10_phi_star, log10_Da2_star, Lambda_star):
 
-    tau_star_break, _, _ = simulate_column_temkin_star(
+    tau_star_break, C_star, n_star = simulate_column_temkin_star(
         phi_star=log10_phi_star,
         Da2_star=log10_Da2_star,
         Lambda_star=Lambda_star,
@@ -44,17 +44,19 @@ def run_model_from_sample(log10_phi_star, log10_Da2_star, Lambda_star):
         tau_star_max=100,
         C_star_thresh=0.5,
         cfl=0.5,
-        store_history=False,
+        store_history=True,
     )
 
-    return tau_star_break
+    bed_util = np.trapezoid(n_star[-1, :], np.linspace(0, 1, 150))  # final loading
+
+    return tau_star_break, bed_util
 
 
 # --------------------------------------------------
 # 3) Plotting utility
 # --------------------------------------------------
 
-def plot_sobol_indices(df, filename="sobol_indices_langmuir5.png"):
+def plot_sobol_indices(df, filename="sobol_indices_langmuir5.png", title="Sobol sensitivity"):
     x = np.arange(len(df))
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
 
@@ -77,7 +79,7 @@ def plot_sobol_indices(df, filename="sobol_indices_langmuir5.png"):
         ax.set_ylim(0, ymax)
         ax.grid(axis="y", alpha=0.3)
 
-    fig.suptitle("Sobol sensitivity")
+    fig.suptitle(title)
     fig.savefig(filename, dpi=300)
     fig.savefig(filename.replace(".png", ".svg"))
     plt.close(fig)
@@ -96,31 +98,46 @@ if __name__ == "__main__":
     print(f"Total model evaluations: {param_values.shape[0]}")
 
     Y = np.zeros(param_values.shape[0])
+    bed_utils = np.zeros(param_values.shape[0])
     with tqdm.tqdm(total=len(Y), desc="Evaluating model", unit="eval") as pbar:
         for i, (log10_phi_star, log10_Da2_star, Lambda_star) in enumerate(param_values):
-            Y[i] = run_model_from_sample(log10_phi_star, log10_Da2_star, Lambda_star)
+            Y[i], bed_utils[i] = run_model_from_sample(log10_phi_star, log10_Da2_star, Lambda_star)
             pbar.set_postfix({
             "phi*":     f"{log10_phi_star:.3g}",
             "Da2*":     f"{log10_Da2_star:.3g}",
             "Lambda*":  f"{Lambda_star:.3g}",
             "tau*_break": f"{Y[i]:.3g}",
+            "bed_util": f"{bed_utils[i]:.3g}",
         })
             pbar.update(1)
 
 
 
-    print("Performing Sobol analysis...")
-    Si = sobol.analyze(
+    print("Performing Sobol analysis for breakthrough time...")
+    Si_breakthrough = sobol.analyze(
         problem,
         Y,
         calc_second_order=False,
         print_to_console=True,
     )
 
-    S1 = Si["S1"]
-    ST = Si["ST"]
-    S1_conf = Si["S1_conf"]
-    ST_conf = Si["ST_conf"]
+    S1 = Si_breakthrough["S1"]
+    ST = Si_breakthrough["ST"]
+    S1_conf = Si_breakthrough["S1_conf"]
+    ST_conf = Si_breakthrough["ST_conf"]
+
+    print("\nPerforming Sobol analysis for bed utilization...")
+    Si_bed_util = sobol.analyze(
+        problem,
+        bed_utils,
+        calc_second_order=False,
+        print_to_console=True,
+    )
+
+    S1_bed = Si_bed_util["S1"]
+    ST_bed = Si_bed_util["ST"]
+    S1_conf_bed = Si_bed_util["S1_conf"]
+    ST_conf_bed = Si_bed_util["ST_conf"]
 
     # Convert back from log10-space for saving
     phi_star_vals     = param_values[:, 0]
@@ -133,20 +150,33 @@ if __name__ == "__main__":
         "Da2_star": Da2_star_vals,
         "Lambda_star": Lambda_star_vals,
         "tau_star_break": Y,
+        "bed_utilization": bed_utils,
     })
     df_samples.to_csv("sobol_samples_langmuir_5.csv", index=False)
 
     print("Saving Sobol indices...")
-    df_sobol = pd.DataFrame({
+    df_sobol_breakthrough = pd.DataFrame({
         "param": pretty_names,
         "S1": S1,
         "S1_conf": S1_conf,
         "ST": ST,
         "ST_conf": ST_conf,
     })
-    df_sobol.to_csv("sobol_indices_langmuir_5.csv", index=False)
+    df_sobol_breakthrough.to_csv("sobol_indices_breakthrough_langmuir_5.csv", index=False)
+
+    df_sobol_bed_util = pd.DataFrame({
+        "param": pretty_names,
+        "S1": S1_bed,
+        "S1_conf": S1_conf_bed,
+        "ST": ST_bed,
+        "ST_conf": ST_conf_bed,
+    })
+    df_sobol_bed_util.to_csv("sobol_indices_bed_util_langmuir_5.csv", index=False)
 
     print("Plotting Sobol indices...")
-    plot_sobol_indices(df_sobol)
+    plot_sobol_indices(df_sobol_breakthrough, filename="sobol_indices_breakthrough_5.png",
+                       title="Sobol sensitivity - Breakthrough time")
+    plot_sobol_indices(df_sobol_bed_util, filename="sobol_indices_bed_util_5.png",
+                       title="Sobol sensitivity - Bed utilization")
 
     print("\nDone.")
