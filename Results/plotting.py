@@ -29,7 +29,59 @@ def scatter_plot(data: pd.DataFrame, x: str, y: str, c: str, filename: str):
     
     ax.legend()
     fig.savefig(filename)
+    plt.close(fig)
+
+def scatter_plot_data(x, y, c, xlabel, ylabel, clabel, filename):
+    fig, ax = plt.subplots()
+
+    if c is None:
+        ax.scatter(x, y)
+    else:
+        sc = ax.scatter(x, y, c=c)
+        cbar = fig.colorbar(sc, ax=ax)
+        cbar.set_label(pretty_names[clabel])
+
+    ax.set_xlabel(pretty_names[xlabel])
+    ax.set_ylabel(pretty_names[ylabel])
+    
+    ax.legend()
+    fig.savefig(filename)
+    plt.close(fig)
+
 
 if __name__ == "__main__":
     df = pd.read_csv("Sensitivity/Sobol/Good Ranges/sobol_samples_langmuir_05.csv")
-    scatter_plot(df, 'Da2_star', 'tau_star_break', 'phi_star', 'test2.svg')
+    scatter_plot(df, 'Da2_star', 'tau_star_break', 'phi_star', 'Da_tau_phi_05.svg')
+    scatter_plot(df, 'Da2_star', 'bed_utilization', 'phi_star', 'Da_bed_phi_05.svg')
+    
+    scatter_plot(df, 'phi_star', 'tau_star_break', 'Da2_star', 'phi_tau_Da_05.svg')
+    scatter_plot(df, 'phi_star', 'bed_utilization', 'Da2_star', 'phi_bed_Da_05.svg')
+    
+    scatter_plot(df, 'Da2_star', 'tau_star_break', 'Lambda_star', 'Da_tau_Lambda_05.svg')
+    scatter_plot(df, 'Da2_star', 'bed_utilization', 'Lambda_star', 'Da_bed_Lambda_05.svg')
+    
+    scatter_plot(df, 'phi_star', 'tau_star_break', 'Lambda_star', 'phi_tau_Lambda_05.svg')
+    scatter_plot(df, 'phi_star', 'bed_utilization', 'Lambda_star', 'phi_bed_Lambda_05.svg')
+
+    scatter_plot(df, 'Lambda_star', 'tau_star_break', 'Da2_star', 'Lambda_tau_Da_05.svg')
+    scatter_plot(df, 'Lambda_star', 'tau_star_break', 'phi_star', 'Lambda_tau_phi_05.svg')
+    scatter_plot(df, 'Lambda_star', 'bed_utilization', 'phi_star', 'Lambda_bed_phi_05.svg')
+    scatter_plot(df, 'Lambda_star', 'bed_utilization', 'Da2_star', 'Lambda_bed_Da_05.svg')
+    
+    df = pd.read_csv("Sensitivity/Sobol/Good Ranges/sobol_samples_langmuir_5.csv")
+    scatter_plot(df, 'Da2_star', 'tau_star_break', 'phi_star', 'Da_tau_phi_50.svg')
+    scatter_plot(df, 'Da2_star', 'bed_utilization', 'phi_star', 'Da_bed_phi_50.svg')
+    
+    scatter_plot(df, 'phi_star', 'tau_star_break', 'Da2_star', 'phi_tau_Da_50.svg')
+    scatter_plot(df, 'phi_star', 'bed_utilization', 'Da2_star', 'phi_bed_Da_50.svg')
+    
+    scatter_plot(df, 'Da2_star', 'tau_star_break', 'Lambda_star', 'Da_tau_Lambda_50.svg')
+    scatter_plot(df, 'Da2_star', 'bed_utilization', 'Lambda_star', 'Da_bed_Lambda_50.svg')
+    
+    scatter_plot(df, 'phi_star', 'tau_star_break', 'Lambda_star', 'phi_tau_Lambda_50.svg')
+    scatter_plot(df, 'phi_star', 'bed_utilization', 'Lambda_star', 'phi_bed_Lambda_50.svg')
+    
+    scatter_plot(df, 'Lambda_star', 'tau_star_break', 'Da2_star', 'Lambda_tau_Da_50.svg')
+    scatter_plot(df, 'Lambda_star', 'tau_star_break', 'phi_star', 'Lambda_tau_phi_50.svg')
+    scatter_plot(df, 'Lambda_star', 'bed_utilization', 'phi_star', 'Lambda_bed_phi_50.svg')
+    scatter_plot(df, 'Lambda_star', 'bed_utilization', 'Da2_star', 'Lambda_bed_Da_50.svg')
