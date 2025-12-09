@@ -677,7 +677,7 @@ class Study:
 
         capacity_factors = (1-epsilon) / epsilon * self.sorbent_properties.density_si * q_0 / C_0
 
-        damkohler_numbers = k_s * q_0 * self.column_experiments.column_properties.Length_si / self.column_experiments.interstitial_velocity_si()
+        damkohler_numbers = k_s * q_0 * self.column_experiments.column_properties.Length_si / self.column_experiments.superficial_velocity_si()
 
         return capacity_factors, damkohler_numbers
 

@@ -8,7 +8,7 @@ from SALib.sample import saltelli
 from SALib.analyze import sobol
 import tqdm
 
-from non_dim_model import simulate_column_temkin_star
+from non_dim_model import simulate_column_temkin_star, simulate_column_LDF
 
 
 # --------------------------------------------------
@@ -20,7 +20,7 @@ problem = {
     "names": ["log10_phi_star", "log10_Da2_star", "Lambda_star"],
     "bounds": [
         [.01,  10],   # φ* ∈ [0.1, 100]
-        [.01,  10],   # Da2* ∈ [1e−2, 1e2]
+        [.005,  10],   # Da2* ∈ [1e−2, 1e2]
         [.1,  10],   # Λ* ∈ [0.5, 5]  (tune to your system)
     ],
     "dists": ["unif", "unif", "unif"]
@@ -35,14 +35,14 @@ pretty_names = [r"$\phi^\ast$", r"$\mathrm{Da}_2^\ast$", r"$\Lambda^\ast$"]
 
 def run_model_from_sample(log10_phi_star, log10_Da2_star, Lambda_star):
 
-    tau_star_break, C_star, n_star = simulate_column_temkin_star(
+    tau_star_break, C_star, n_star = simulate_column_LDF(
         phi_star=log10_phi_star,
         Da2_star=log10_Da2_star,
         Lambda_star=Lambda_star,
         eps=0.4,
         Nx=150,
         tau_star_max=100,
-        C_star_thresh=0.5,
+        C_star_thresh=0.05,
         cfl=0.5,
         store_history=True,
     )
@@ -56,7 +56,7 @@ def run_model_from_sample(log10_phi_star, log10_Da2_star, Lambda_star):
 # 3) Plotting utility
 # --------------------------------------------------
 
-def plot_sobol_indices(df, filename="sobol_indices_langmuir5.png", title="Sobol sensitivity"):
+def plot_sobol_indices(df, filename="sobol_indices_langmuir_LDF_5.png", title="Sobol sensitivity (LDF)"):
     x = np.arange(len(df))
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
 
@@ -152,7 +152,7 @@ if __name__ == "__main__":
         "tau_star_break": Y,
         "bed_utilization": bed_utils,
     })
-    df_samples.to_csv("sobol_samples_langmuir_5.csv", index=False)
+    df_samples.to_csv("sobol_samples_langmuir_LDF_50.csv", index=False)
 
     print("Saving Sobol indices...")
     df_sobol_breakthrough = pd.DataFrame({
@@ -162,7 +162,7 @@ if __name__ == "__main__":
         "ST": ST,
         "ST_conf": ST_conf,
     })
-    df_sobol_breakthrough.to_csv("sobol_indices_breakthrough_langmuir_5.csv", index=False)
+    df_sobol_breakthrough.to_csv("sobol_indices_breakthrough_langmuir_LDF_50.csv", index=False)
 
     df_sobol_bed_util = pd.DataFrame({
         "param": pretty_names,
@@ -171,12 +171,12 @@ if __name__ == "__main__":
         "ST": ST_bed,
         "ST_conf": ST_conf_bed,
     })
-    df_sobol_bed_util.to_csv("sobol_indices_bed_util_langmuir_5.csv", index=False)
+    df_sobol_bed_util.to_csv("sobol_indices_bed_util_langmuir_LDF_50.csv", index=False)
 
     print("Plotting Sobol indices...")
-    plot_sobol_indices(df_sobol_breakthrough, filename="sobol_indices_breakthrough_5.png",
+    plot_sobol_indices(df_sobol_breakthrough, filename="sobol_indices_breakthrough_LDF_50.png",
                        title="Sobol sensitivity - Breakthrough time")
-    plot_sobol_indices(df_sobol_bed_util, filename="sobol_indices_bed_util_5.png",
+    plot_sobol_indices(df_sobol_bed_util, filename="sobol_indices_bed_util_50.png",
                        title="Sobol sensitivity - Bed utilization")
 
     print("\nDone.")

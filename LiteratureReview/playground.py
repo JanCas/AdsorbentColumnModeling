@@ -1,4 +1,4 @@
-from ..utils.Dataclasses import Study
+from utils.Dataclasses import Study
 from pathlib import Path
 
 script_dir = Path(__file__).parent
