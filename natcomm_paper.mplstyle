@@ -1,0 +1,78 @@
+######### GENERAL FIGURE SETTINGS #########
+figure.figsize: 3.4, 2.6
+figure.dpi: 300
+savefig.dpi: 300
+savefig.bbox: tight
+savefig.pad_inches: 0.02
+savefig.transparent: True
+
+######### FONTS & TEXT #########
+font.family: serif
+font.serif: Times New Roman, Times, Computer Modern Roman, DejaVu Serif
+
+font.size: 8
+axes.labelsize: 8
+axes.titlesize: 8
+xtick.labelsize: 7
+ytick.labelsize: 7
+legend.fontsize: 7
+
+text.usetex: False
+axes.unicode_minus: True
+
+######### AXES #########
+axes.linewidth: 0.8
+axes.edgecolor: black
+axes.labelcolor: black
+axes.grid: False
+axes.spines.top: True
+axes.spines.right: True
+
+######### TICKS #########
+xtick.direction: in
+ytick.direction: in
+xtick.top: True
+ytick.right: True
+
+xtick.major.size: 3.0
+ytick.major.size: 3.0
+xtick.major.width: 0.6
+ytick.major.width: 0.6
+
+xtick.minor.size: 1.8
+ytick.minor.size: 1.8
+xtick.minor.width: 0.5
+ytick.minor.width: 0.5
+
+xtick.minor.visible: True
+ytick.minor.visible: True
+
+######### LINES #########
+lines.linewidth: 1.0
+lines.markersize: 3.0
+lines.markeredgewidth: 0.6
+lines.solid_capstyle: butt
+
+######### LEGEND #########
+legend.frameon: False
+legend.borderpad: 0.2
+legend.labelspacing: 0.25
+legend.handlelength: 1.5
+legend.handletextpad: 0.4
+legend.borderaxespad: 0.4
+legend.columnspacing: 1.0
+legend.fancybox: False
+
+######### COLOR SETTINGS #########
+
+# Default colormap set to batlow
+image.cmap: batlow
+
+# Line color cycle = discrete batlow samples
+# (sampled from Crameri batlow colormap)
+axes.prop_cycle: cycler(color=["#011959", "#2A3F8F", "#4C67AF", "#6D8EC2", "#90B4CE", "#B5D6D6", "#D7E9C2", "#F1D79D", "#F9AA72", "#EB6A45", "#C12B37"])
+
+######### PADDING #########
+axes.labelpad: 2.0
+xtick.major.pad: 2.0
+ytick.major.pad: 2.0
