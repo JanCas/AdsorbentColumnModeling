@@ -51,6 +51,11 @@ class SpatialDiscretisation(eqx.Module):
 def langmuir_isotherm_non_dim(C_star, theta):
     return (1+theta)*C_star/(1+theta*C_star)
 
+def filter_inf(arr):
+    if arr.ndim == 2:
+        return arr[~np.isinf(arr).any(axis=1)]
+    return arr[~np.isinf(arr)]
+
 class ColumnState(eqx.Module):
     C_star: SpatialDiscretisation
     n_star: SpatialDiscretisation
@@ -92,12 +97,18 @@ def finish_event(t, y: ColumnState, *args, **kwargs):
     return y.C_star.vals[-1] >= .05
 
 def run_wrapper(non_dim_nums: NonDimNumbers):
+    """
+        Docstring for run_wrapper
+
+        :param non_dim_nums: Description
+        :type non_dim_nums: NonDimNumbers
+    """
     ode_term = diffrax.ODETerm(column_ode)
     
     # Spatial discretisation
     x0 = 0
     x_final = 1
-    n = 10
+    n = 50
     y0 = ColumnState( 
         C_star = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0),
         n_star = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0)
@@ -132,27 +143,30 @@ def run_wrapper(non_dim_nums: NonDimNumbers):
         args=non_dim_nums,
         max_steps=5_000_000,
     )
-    return sol
 
-def filter_inf(arr):
-    if arr.ndim == 2:
-        return arr[~np.isinf(arr).any(axis=1)]
-    return arr[~np.isinf(arr)]
+    # n_star = np.asarray(sol.ys.C_star.vals)
+    n_star = filter_inf(sol.ys.n_star.vals)
+    t_f = filter_inf(sol.ts)[-1]
+    U_b = np.trapezoid(n_star[-1, :], np.linspace(0,1,n))
+
+
+
+    return t_f, U_b
+
     
+# if __name__ == "__main__":
 
-if __name__ == "__main__":
+#     non_dim_numbers = NonDimNumbers(
+#         Da=9, Lambda=9, epsilon=.35, theta=9
+#     )
 
-    non_dim_numbers = NonDimNumbers(
-        Da=9, Lambda=9, epsilon=.35, theta=9
-    )
+#     sol = run_wrapper(non_dim_nums=non_dim_numbers)
+#     x0 = np.asarray(sol.ys.C_star.vals)
+#     n = np.asarray(sol.ys.n_star.vals)
 
-    sol = run_wrapper(non_dim_nums=non_dim_numbers)
-    x0 = np.asarray(sol.ys.C_star.vals)
-    n = np.asarray(sol.ys.n_star.vals)
-
-    x = filter_inf(x0)
-    n = filter_inf(n)
-    bed_util = np.trapezoid(n[-1, :], np.linspace(0,1,10))
-    print(bed_util)
-    t = filter_inf(np.asarray(sol.ts))
-    print("Done")
+#     x = filter_inf(x0)
+#     n = filter_inf(n)
+#     bed_util = np.trapezoid(n[-1, :], np.linspace(0,1,10))
+#     print(bed_util)
+#     t = filter_inf(np.asarray(sol.ts))
+#     print("Done")
