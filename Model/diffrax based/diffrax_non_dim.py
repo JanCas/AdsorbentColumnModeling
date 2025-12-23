@@ -76,7 +76,7 @@ def column_ode(t, state: ColumnState, non_dim_nums: NonDimNumbers):
     epsilon = non_dim_nums.epsilon
 
     n_eq_star = jax.vmap(lambda c: langmuir_isotherm_non_dim(c, theta))(C_star.vals)
-    dn_dt = Da * (n_eq_star - n_star.vals)
+    dn_dt = Da * (n_eq_star - n_star.vals) ** 2
 
     C_star_prev = jnp.roll(C_star.vals, 1)
     C_star_prev = C_star_prev.at[0].set(1) # inlet boundary condition
@@ -96,6 +96,7 @@ def finish_event(t, y: ColumnState, *args, **kwargs):
 
     return y.C_star.vals[-1] >= .05
 
+@jax.jit
 def run_wrapper(non_dim_nums: NonDimNumbers):
     """
         Docstring for run_wrapper
@@ -108,7 +109,7 @@ def run_wrapper(non_dim_nums: NonDimNumbers):
     # Spatial discretisation
     x0 = 0
     x_final = 1
-    n = 50
+    n = 20
     y0 = ColumnState( 
         C_star = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0),
         n_star = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0)
@@ -121,8 +122,8 @@ def run_wrapper(non_dim_nums: NonDimNumbers):
     saveat = diffrax.SaveAt(t0=True, steps=True)
 
     # Tolerances
-    rtol = 1e-10
-    atol = 1e-10
+    rtol = 1e-3
+    atol = 1e-6
     stepsize_controller = diffrax.PIDController(
         pcoeff=0.3, icoeff=0.4, rtol=rtol, atol=atol, dtmax=0.001
     )
@@ -143,14 +144,18 @@ def run_wrapper(non_dim_nums: NonDimNumbers):
         args=non_dim_nums,
         max_steps=5_000_000,
     )
-
-    # n_star = np.asarray(sol.ys.C_star.vals)
-    n_star = filter_inf(sol.ys.n_star.vals)
-    t_f = filter_inf(sol.ts)[-1]
-    U_b = np.trapezoid(n_star[-1, :], np.linspace(0,1,n))
-
-
-
+     # Stay in JAX - get the last valid index using the event
+    n_star_vals = sol.ys.n_star.vals
+    ts = sol.ts
+    
+    # Use jnp.where to handle potential inf values
+    valid_mask = jnp.isfinite(ts)
+    last_idx = jnp.sum(valid_mask) - 1
+    
+    n_star_final = n_star_vals[last_idx]
+    t_f = ts[last_idx]
+    U_b = jnp.trapezoid(n_star_final, jnp.linspace(0, 1, n))
+    
     return t_f, U_b
 
     

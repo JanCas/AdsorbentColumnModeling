@@ -7,6 +7,7 @@ import tqdm
 from diffrax_non_dim import run_wrapper, NonDimNumbers
 import cmcrameri.cm as cm
 from matplotlib import colormaps
+import jax
 
 colormaps.register(cm.batlow, name="batlow")
 plt.style.use('natcomm_paper.mplstyle')
@@ -24,7 +25,7 @@ problem = {
 
 pretty_names = [r"$\Lambda^*$", r"$Da^*$", r"$\Theta^*$"]
 
-def plot_sobol_indices(df, filename="sobol_indices_langmuir_LDF_5.png", title="Sobol sensitivity (LDF)"):
+def plot_sobol_indices(df, filename="sobol_indices_langmuir_5.png", title="Sobol sensitivity (LDF)"):
     x = np.arange(len(df))
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
 
@@ -53,6 +54,8 @@ def plot_sobol_indices(df, filename="sobol_indices_langmuir_LDF_5.png", title="S
     plt.close(fig)
 
 if __name__ == "__main__":
+    jax.config.update("jax_platform_name", "cpu")
+    print(jax.devices())
     print("Generating Sobol Samples...")
     
     N=2048 # base sample size
@@ -120,7 +123,7 @@ if __name__ == "__main__":
         "tau_star_break": tau,
         "bed_utilization": bed_util,
     })
-    df_samples.to_csv("sobol_samples_langmuir_LDF_50.csv", index=False)
+    df_samples.to_csv("sobol_samples_langmuir_05.csv", index=False)
 
     print("Saving Sobol indices...")
     df_sobol_breakthrough = pd.DataFrame({
@@ -130,7 +133,7 @@ if __name__ == "__main__":
         "ST": ST,
         "ST_conf": ST_conf,
     })
-    df_sobol_breakthrough.to_csv("sobol_indices_breakthrough_langmuir_LDF_50.csv", index=False)
+    df_sobol_breakthrough.to_csv("sobol_indices_breakthrough_langmuir_05.csv", index=False)
 
     df_sobol_bed_util = pd.DataFrame({
         "param": pretty_names,
@@ -139,12 +142,12 @@ if __name__ == "__main__":
         "ST": ST_bed,
         "ST_conf": ST_conf_bed,
     })
-    df_sobol_bed_util.to_csv("sobol_indices_bed_util_langmuir_LDF_50.csv", index=False)
+    df_sobol_bed_util.to_csv("sobol_indices_bed_util_langmuir_05.csv", index=False)
 
     print("Plotting Sobol indices...")
-    plot_sobol_indices(df_sobol_breakthrough, filename="sobol_indices_breakthrough_LDF_50.png",
+    plot_sobol_indices(df_sobol_breakthrough, filename="sobol_indices_breakthrough_05.png",
                        title="Sobol sensitivity - Breakthrough time")
-    plot_sobol_indices(df_sobol_bed_util, filename="sobol_indices_bed_util_50.png",
+    plot_sobol_indices(df_sobol_bed_util, filename="sobol_indices_bed_util_05.png",
                        title="Sobol sensitivity - Bed utilization")
 
     print("\nDone.")
