@@ -51,7 +51,7 @@ class SpatialDiscretisation(eqx.Module):
 
 class ColumnState(eqx.Module):
     C: SpatialDiscretisation
-    q: SpatialDiscretisation
+    n: SpatialDiscretisation
 
 class ColumnParameters(eqx.Module):
     u_inter: float
@@ -61,7 +61,7 @@ class ColumnParameters(eqx.Module):
     b: float
     C_in: float
     L: float
-    rho_s: float
+    rho_p: float
 
 def langmuir_isotherm(C, params: ColumnParameters):
     return params.q_max * params.b * C / (1 + params.b * C)
@@ -96,3 +96,41 @@ column_params = ColumnParameters(
     L=.6,
     rho_s=680
 )
+
+def finish_event(t,y: ColumnState, *args, **kwargs):
+
+    total_adsorbed = y.n
+    
+
+
+def run_wrapper(column_params: ColumnParameters) ->  float:
+    """
+    Runs the diffrax model for the column sorption and returns the SEC
+     
+    :param column_params: Description
+    :type column_params: ColumnParameters
+    :return: SEC
+    :rtype: float
+    """
+
+    #Spatial discretization
+    x0 = 0
+    x_final = column_params.L
+    n = 100
+    y0 = ColumnState(
+        C = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0),
+        n = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0)
+    )
+
+    #Temporal discretization
+    t0 = 0
+    t_final = jnp.inf
+    dt = .00001
+    saveat = diffrax.SaveAt(t0=True, steps=True)
+
+    #Tolerances
+    rtol=1e-6
+    atol=1e-6
+    stepsize_controller = diffrax.PIDController()
+
+    event = diffrax.Event()
