@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import jax.lax as lax
 from jaxtyping import Array, Float
+from ...utils.Dataclasses import ColumnParameters
 
 from collections.abc import Callable
 
@@ -53,15 +54,6 @@ class ColumnState(eqx.Module):
     C: SpatialDiscretisation
     n: SpatialDiscretisation
 
-class ColumnParameters(eqx.Module):
-    u_inter: float
-    k_s: float
-    epsilon: float
-    q_max: float
-    b: float
-    C_in: float
-    L: float
-    rho_p: float
 
 def langmuir_isotherm(C, params: ColumnParameters):
     return params.q_max * params.b * C / (1 + params.b * C)
@@ -97,9 +89,11 @@ column_params = ColumnParameters(
     rho_s=680
 )
 
-def finish_event(t,y: ColumnState, *args, **kwargs):
+def finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
+    total_adsorbed = jnp.sum(y.n.vals)
+    potential_adsorbed = langmuir_isotherm(params.C_in, params) * len(y.n.vals)
+    return total_adsorbed / potential_adsorbed
 
-    total_adsorbed = y.n
     
 
 
@@ -133,4 +127,20 @@ def run_wrapper(column_params: ColumnParameters) ->  float:
     atol=1e-6
     stepsize_controller = diffrax.PIDController()
 
-    event = diffrax.Event()
+    event = diffrax.Event(finish_event)
+
+    solution = diffrax.diffeqsolve(
+        terms=diffrax.ODETerm(column_ode),
+        solver=diffrax.Tsit5(),
+        t0=t0,
+        t1=t_final,
+        dt0=dt,
+        y0=y0,
+        args=column_params,
+        saveat=saveat,
+        stepsize_controller=stepsize_controller,
+        event=event,
+        max_steps=None,
+    )
+
+    return solution

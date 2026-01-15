@@ -8,6 +8,7 @@ import casadi as ca
 from thermo import IAPWS95Liquid as Water
 import uuid
 from pyEQL import Solution
+import equinox as eqx
 
 Li_MW = 6.94  # g/mol
 D_Li_in_H2O = lambda T,c: Solution({"Li+": f"{c} mol/m^3"}, temperature=f'{T}K').get_diffusion_coefficient("Li+").magnitude  # m²/s
@@ -20,6 +21,16 @@ def convert_mg_per_L_to_mol_per_m3(concentration_mg_per_L: float | np.ndarray) -
 def convert_mg_per_g_to_mol_per_kg(q_mg_per_g: float | np.ndarray) -> float | np.ndarray:
     "Converts adsorption capacity from mg/g to mol/kg."
     return q_mg_per_g / Li_MW  # Convert to mol/kg
+
+class ColumnParameters(eqx.Module):
+    u_inter: float
+    k_s: float
+    epsilon: float
+    q_max: float
+    b: float
+    C_in: float
+    L: float
+    rho_p: float
 
 @dataclass(frozen=True)
 class PseudoSecondOrderKineticsParameters:
@@ -545,6 +556,9 @@ class Study:
             if (exp.T == curve.T) and (exp.Ph == curve.PH) and (exp.C_e_si == self.column_experiments.influent_concentration_si(**asdict(curve))[0]):
                 return exp
         raise ValueError("No matching kinetics experiment found for the given breakthrough curve.")
+    
+    def get_kinetics_experiment_from_concentration(self, C) -> KineticsExperiment:
+        return min(self.kinetics_experiments, key=lambda exp: abs(exp.C_e_si - C))
 
     def particle_reynolds(self, curve: BreakthroughCurve = None, **filter) -> list[float]:
         "Calculates the reynolds number for using the particle diameter for the breakthrough curves matching the filter."
@@ -680,6 +694,22 @@ class Study:
         damkohler_numbers = k_s * q_0 * self.column_experiments.column_properties.Length_si / self.column_experiments.superficial_velocity_si()
 
         return capacity_factors, damkohler_numbers
+    
+    def to_column_parameter(self, L, D, C_in, Q) -> ColumnParameters:
+        u_inter = Q / np.pi / D**2 / self.column_experiments.column_properties.porosity
+
+        kinetics_experiment = self.get_kinetics_experiment_from_concentration(C_in)
+
+        return ColumnParameters(
+            L=L,
+            u_inter=u_inter,
+            C_in=C_in,
+            k_s=kinetics_experiment.kinetics_params.k2_si,
+            rho_p = self.sorbent_properties.density_si,
+            epsilon=self.column_experiments.column_properties.porosity,
+            # TODO: Isotherm for model
+        )
+
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
