@@ -9,6 +9,7 @@ from thermo import IAPWS95Liquid as Water
 import uuid
 from pyEQL import Solution
 import equinox as eqx
+import jax.numpy as jnp
 
 Li_MW = 6.94  # g/mol
 D_Li_in_H2O = lambda T,c: Solution({"Li+": f"{c} mol/m^3"}, temperature=f'{T}K').get_diffusion_coefficient("Li+").magnitude  # m²/s
@@ -22,15 +23,6 @@ def convert_mg_per_g_to_mol_per_kg(q_mg_per_g: float | np.ndarray) -> float | np
     "Converts adsorption capacity from mg/g to mol/kg."
     return q_mg_per_g / Li_MW  # Convert to mol/kg
 
-class ColumnParameters(eqx.Module):
-    u_inter: float
-    k_s: float
-    epsilon: float
-    q_max: float
-    b: float
-    C_in: float
-    L: float
-    rho_p: float
 
 @dataclass(frozen=True)
 class PseudoSecondOrderKineticsParameters:
@@ -349,8 +341,7 @@ class SorbentProperties:
             particle_diameter_units=data["particle_diameter_units"]
         )
 
-@dataclass(frozen=True)
-class BaseIsothermFit(ABC):
+class BaseIsothermFit(eqx.Module):
     """
     Abstract base class for isotherm fit models.
     """
@@ -363,10 +354,22 @@ class BaseIsothermFit(ABC):
         ...
 
     @abstractmethod
-    def q_eq_si(self, C_eq_si: float) -> float:
+    def q_eq_si(self, C: float) -> float:
         ...
 
-@dataclass(frozen=True)
+    def __call__(self, C: float) -> float:
+        return self.q_eq_si_jax(C)
+
+
+class ColumnParameters(eqx.Module):
+    u_inter: float
+    k_s: float
+    epsilon: float
+    C_in: float
+    L: float
+    rho_p: float
+    isotherm: BaseIsothermFit
+
 class SipsIsothermFit(BaseIsothermFit):
     fit_type: ClassVar[str] = "Sips"
     K_s: float
@@ -413,13 +416,13 @@ class SipsIsothermFit(BaseIsothermFit):
         q_e = (self.Q_max_si * (self.K_s_si * C_eq_si) ** self.n) / (1 + (self.K_s_si * C_eq_si) ** self.n)
         return q_e
 
-@dataclass(frozen=True)
 class TemkinIsothermFit(BaseIsothermFit):
     fit_type: ClassVar[str] = "Temkin"
     A: float
     B: float
     A_units: str
     B_units: str
+    T: float
 
     @property
     def A_si(self) -> float:
@@ -447,23 +450,34 @@ class TemkinIsothermFit(BaseIsothermFit):
             case _:
                 raise ValueError(f"Unsupported B units: {self.B_units}")
 
-    def q_eq_si(self, C_eq_si: float, T: float) -> float:
+    def q_eq_si(self, C_eq_si: float) -> float:
         """
         Calculates the equilibrium uptake (q_eq) in mol/kg using the Temkin isotherm model.
         C_eq_si: Equilibrium concentration in mol/m³
         T: Temperature in K
         Returns q_eq in mol/kg
         """
-        interm = ideal_gas_constant * T / self.B_si
+        interm = ideal_gas_constant * self.T / self.B_si
         return ca.fmax(interm * ca.log(self.A_si) + interm * ca.log(C_eq_si), 0)
+    
+    def q_eq_si_jax(self, C_eq_si):
+        """
+        Calculates the equilibrium uptake (q_eq) in mol/kg using the Temkin isotherm model.
+        C_eq_si: Equilibrium concentration in mol/m³
+        T: Temperature in K
+        Returns q_eq in mol/kg
+        """
+        interm = ideal_gas_constant * self.T / self.B_si
+        return jnp.fmax(interm * jnp.log(self.A_si) + interm * jnp.log(C_eq_si), 0)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TemkinIsothermFit":
+    def from_dict(cls, data: dict, T: float) -> "TemkinIsothermFit":
         return cls(
             A=data["A"],
             B=data["B"],
             A_units=data["A_units"],
-            B_units=data["B_units"]
+            B_units=data["B_units"],
+            T = T
         )
 
 
@@ -524,7 +538,7 @@ class Isotherm:
     def from_dict(cls, data: dict, units: IsothermUnits) -> "Isotherm":
         match data["FitType"]:
             case "Temkin":
-                isotherm_fit = TemkinIsothermFit.from_dict(data["FitParameters"])
+                isotherm_fit = TemkinIsothermFit.from_dict(data["FitParameters"], data["T"])
             case "Sips":
                 isotherm_fit = SipsIsothermFit.from_dict(data["FitParameters"])
             case _:
@@ -696,7 +710,7 @@ class Study:
         return capacity_factors, damkohler_numbers
     
     def to_column_parameter(self, L, D, C_in, Q) -> ColumnParameters:
-        u_inter = Q / np.pi / D**2 / self.column_experiments.column_properties.porosity
+        u_inter = 4 * Q / (np.pi * D**2) /self.column_experiments.column_properties.porosity
 
         kinetics_experiment = self.get_kinetics_experiment_from_concentration(C_in)
 
@@ -707,7 +721,7 @@ class Study:
             k_s=kinetics_experiment.kinetics_params.k2_si,
             rho_p = self.sorbent_properties.density_si,
             epsilon=self.column_experiments.column_properties.porosity,
-            # TODO: Isotherm for model
+            isotherm=self.isotherm.isotherm_fit
         )
 
 

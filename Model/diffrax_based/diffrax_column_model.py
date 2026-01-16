@@ -4,7 +4,11 @@ import jax
 import jax.numpy as jnp
 import jax.lax as lax
 from jaxtyping import Array, Float
-from ...utils.Dataclasses import ColumnParameters
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from utils.Dataclasses import ColumnParameters, Study, BreakthroughCurve
 
 from collections.abc import Callable
 
@@ -54,50 +58,44 @@ class ColumnState(eqx.Module):
     C: SpatialDiscretisation
     n: SpatialDiscretisation
 
-
-def langmuir_isotherm(C, params: ColumnParameters):
-    return params.q_max * params.b * C / (1 + params.b * C)
-
+@jax.jit(static_argnums=2)
 def column_ode(t, state: ColumnState, args: ColumnParameters):
+    # jax.debug.print("args={a.C_in}", a=args)
     C = state.C
-    q = state.q
+    n = state.n
 
-    q_star = jax.vmap(lambda c: langmuir_isotherm(c, args))(C.vals)
-    dq_dt = args.k_s * (q_star - q.vals)
+    n_star = args.isotherm(C.vals)
+    # jax.debug.print("n_star={n}", n=n_star)
+    dn_dt = args.k_s * (n_star - n.vals)**2
 
     C_prev = jnp.roll(C.vals, shift=1)
     C_prev = C_prev.at[0].set(args.C_in)
 
     advection_dc_dx = (C.vals - C_prev) / C.δx
-    sorption = (1 - args.epsilon) / args.epsilon * args.rho_s * dq_dt
+    sorption = (1 - args.epsilon) / args.epsilon * args.rho_p * dn_dt
 
     dC_dt = -args.u_inter * advection_dc_dx - sorption
 
     return ColumnState(
         C=SpatialDiscretisation(C.x0, C.x_final, dC_dt),
-        q=SpatialDiscretisation(q.x0, q.x_final, dq_dt)
+        n=SpatialDiscretisation(n.x0, n.x_final, dn_dt)
     )
-
-column_params = ColumnParameters(
-    u_inter=.0003,
-    k_s=0.00000666,
-    epsilon=0.35,
-    q_max=.69,
-    b=6.25,
-    C_in=50,
-    L=.6,
-    rho_s=680
-)
 
 def finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
     total_adsorbed = jnp.sum(y.n.vals)
-    potential_adsorbed = langmuir_isotherm(params.C_in, params) * len(y.n.vals)
-    return total_adsorbed / potential_adsorbed
+    potential_adsorbed = params.isotherm(params.C_in) * len(y.n.vals)
+    ratio = total_adsorbed / potential_adsorbed
 
-    
+    # Print every 100 seconds
+    lax.cond(
+        (t % 100) < 0.1,
+        lambda: jax.debug.print("t={t}, adsorption ratio={ratio}", t=t, ratio=ratio),
+        lambda: None
+    )
+    return ratio > .85
 
 
-def run_wrapper(column_params: ColumnParameters) ->  float:
+def run_model(column_params: ColumnParameters) ->  float:
     """
     Runs the diffrax model for the column sorption and returns the SEC
      
@@ -119,19 +117,20 @@ def run_wrapper(column_params: ColumnParameters) ->  float:
     #Temporal discretization
     t0 = 0
     t_final = jnp.inf
-    dt = .00001
+    dt = .1
     saveat = diffrax.SaveAt(t0=True, steps=True)
 
     #Tolerances
     rtol=1e-6
     atol=1e-6
-    stepsize_controller = diffrax.PIDController()
+    # stepsize_controller = diffrax.PIDController()
+    stepsize_controller = diffrax.ConstantStepSize()
 
     event = diffrax.Event(finish_event)
 
     solution = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
-        solver=diffrax.Tsit5(),
+        solver=diffrax.Euler(),
         t0=t0,
         t1=t_final,
         dt0=dt,
@@ -140,7 +139,57 @@ def run_wrapper(column_params: ColumnParameters) ->  float:
         saveat=saveat,
         stepsize_controller=stepsize_controller,
         event=event,
-        max_steps=None,
+        max_steps=int(1e6),
     )
 
     return solution
+
+def plot_breakthrough(solution, column_params: ColumnParameters, curve: BreakthroughCurve = None):
+    """Plot the breakthrough curve (C_out/C_in vs BV)."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    ts = np.array(solution.ts)
+    # Filter out infinite time values
+    valid_mask = np.isfinite(ts)
+    ts = ts[valid_mask]
+
+    # Convert time to Bed Volumes: BV = u_superficial * t / L = u_inter * epsilon * t / L
+    BV = column_params.u_inter * column_params.epsilon * ts / column_params.L
+
+    # Get outlet concentration (last spatial node) at each time - vectorized
+    C_out = np.array(solution.ys.C.vals[valid_mask, -1])
+    C_out_over_C_in = C_out / column_params.C_in
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(BV, C_out_over_C_in, label='Model')
+
+    # Plot experimental data if provided
+    if curve is not None:
+        plt.scatter(curve.BV, curve.C_out_over_C_in, label='Experimental', marker='o')
+
+    plt.xlabel('Bed Volumes (BV)')
+    plt.ylabel('C_out / C_in')
+    plt.title('Breakthrough Curve')
+    plt.legend()
+    plt.grid(True)
+    plt.ylim(0, 1.1)
+    plt.show()
+
+if __name__ == "__main__":
+    study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
+
+    column_length = study.column_experiments.column_properties.Length_si
+    column_diameter = study.column_experiments.column_properties.Diameter_si
+
+    # Get the experimental breakthrough curve
+    exp_curve = study.column_experiments.breakthrough_curves.filter(flowrate=8)[0]
+
+    flowrate = study.column_experiments.superficial_flowrate_si()[2]
+    params = study.to_column_parameter(column_length, column_diameter, 50, flowrate)
+
+    solution = run_model(params)
+
+    plot_breakthrough(solution, params, exp_curve)
+
+
