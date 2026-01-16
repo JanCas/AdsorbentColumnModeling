@@ -370,6 +370,14 @@ class ColumnParameters(eqx.Module):
     rho_p: float
     isotherm: BaseIsothermFit
 
+    def replace(self, **kwargs) -> "ColumnParameters":
+        """Return a new instance with updated values."""
+        return eqx.tree_at(
+            lambda x: [getattr(x, k) for k in kwargs.keys()],
+            self,
+            list(kwargs.values()),
+        )
+
 class SipsIsothermFit(BaseIsothermFit):
     fit_type: ClassVar[str] = "Sips"
     K_s: float
