@@ -1,6 +1,7 @@
 from pymoo.core.problem import ElementwiseProblem
 from pymoo.algorithms.soo.nonconvex.de import DE
 from pymoo.optimize import minimize
+from pymoo.termination.default import DefaultSingleObjectiveTermination
 import sys
 from pathlib import Path
 from diffrax_column_model import run_model
@@ -14,12 +15,12 @@ from utils.Dataclasses import ColumnParameters, Study, BreakthroughCurve
 
 class ColumnOptimizationProblem(ElementwiseProblem):
     
-    def __init__(self, study: Study, C_in: float, L_bounds: tuple, u_s_bounds: tuple):
+    def __init__(self, study: Study, C_in: float, L_bounds: tuple, u_s_bounds: tuple, bed_util_bounds: tuple):
         super().__init__(
-            n_var=2,
+            n_var=3,
             n_obj=1,
-            xl=[L_bounds[0], u_s_bounds[0]],
-            xu=[L_bounds[1], u_s_bounds[1]]
+            xl=[L_bounds[0], u_s_bounds[0], bed_util_bounds[0]],
+            xu=[L_bounds[1], u_s_bounds[1], bed_util_bounds[1]]
         )
 
         self.study = study
@@ -31,15 +32,15 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         self.rho_p = study.sorbent_properties.density_si
 
     def _evaluate(self, x, out, *args, **kwargs):
-        L, u_super = float(x[0]), float(x[1])
+        L, u_super, bed_util = float(x[0]), float(x[1]), float(x[2])
         params = self.study.to_column_parameter(L=L, C_in=self.C_in, u_super=u_super)
 
-        (t_ads, C_ads, n_ads), (t_des, C_des, n_des) = run_model(params)
+        (t_ads, C_ads, n_ads), (t_des, C_des, n_des) = run_model(params, bed_util)
 
         sec = self._specific_energy_consumption(u_super=u_super, n_des=n_des, t_des=t_des)
 
 
-        print(f"L: {L:.2f}, u_super: {u_super:.5f}, sec: {sec}, t_des: {t_des[-1]}")
+        print(f"L: {L:.2f}, u_super: {u_super:.5f}, bed_util: {bed_util:.4f}, sec: {sec:.3f}, t_ads: {t_ads[-1]:.1f},t_des: {t_des[-1]:.1f}")
         out["F"] = [sec]
 
     
@@ -66,16 +67,21 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         return pumping_power / li_recovered
 
 
-def run_optimization(study: Study, C_in: float, L_bounds: tuple, u_bounds: tuple, pop_size=40, n_gen=100, seed=1):
-    problem = ColumnOptimizationProblem(study, C_in, L_bounds, u_bounds)
+def run_optimization(study: Study, C_in: float, L_bounds: tuple, u_bounds: tuple, bed_util_bounds: tuple,pop_size=40, seed=1):
+    problem = ColumnOptimizationProblem(study, C_in, L_bounds, u_bounds, bed_util_bounds)
+
+    # X = np.random.uniform(problem.xl, problem.xu, size=(pop_size, 2))
+    # X[0, :] = [1, .0001]
+
     algorithm = DE(pop_size=pop_size)
-    res = minimize(problem, algorithm, ("n_gen", n_gen), seed=seed, verbose=True)
+    termination = DefaultSingleObjectiveTermination(ftol=1e-3, xtol=1e-3, period=10)
+    res = minimize(problem, algorithm, termination, seed=seed, verbose=True)
 
     return res
 
 if __name__ == "__main__":
     study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
 
-    res = run_optimization(study, 50, (.6, 2), (0.00033, .005))
+    res = run_optimization(study, 50, (.6, 2), (0.0001, .0099), (.1, .9))
 
     print()

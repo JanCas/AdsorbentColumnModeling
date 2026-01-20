@@ -82,25 +82,21 @@ def column_ode(t, state: ColumnState, args: ColumnParameters):
         n=SpatialDiscretisation(n.x0, n.x_final, dn_dt)
     )
 
-def adsorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
-    total_adsorbed = jnp.sum(y.n.vals)
-    potential_adsorbed = params.isotherm(params.C_in) * len(y.n.vals)
-    ratio = total_adsorbed / potential_adsorbed
+def make_adsorption_event(bed_utilization):
+    def adsorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
+        total_adsorbed = jnp.sum(y.n.vals)
+        potential_adsorbed = params.isotherm(params.C_in) * len(y.n.vals)
+        ratio = total_adsorbed / potential_adsorbed
 
-    # Print every 100 seconds
-    # lax.cond(
-    #     (t % 100) < 0.1,
-    #     lambda: jax.debug.print("t={t}, adsorption ratio={ratio}", t=t, ratio=ratio),
-    #     lambda: None
-    # )
-    return ratio > .5
+        return ratio > bed_utilization
+    return adsorption_finish_event
 
-def make_desorption_event(initial_total):
-    """Create desorption event that stops when 99% of Li is recovered."""
+def make_desorption_event(potential_adsorbed, threshold=0.02):
+    """Create desorption event that stops when loading drops below threshold of max potential."""
     def desorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
         total_adsorbed = jnp.sum(y.n.vals)
-        fraction_remaining = total_adsorbed / initial_total
-        return fraction_remaining < 0.05  # Stop at 1% remaining
+        ratio = total_adsorbed / potential_adsorbed
+        return ratio < threshold
     return desorption_finish_event
 
 
@@ -116,7 +112,7 @@ def get_finish_state(solution):
 
     return t, C, n
 
-def run_model(column_params: ColumnParameters) ->  float:
+def run_model(column_params: ColumnParameters, bed_utilization: float = .5) ->  float:
     """
     Runs the diffrax model for the column sorption and returns the SEC
      
@@ -129,7 +125,7 @@ def run_model(column_params: ColumnParameters) ->  float:
     #Spatial discretization
     x0 = 0
     x_final = column_params.L
-    n = 25
+    n = 10
     y0_ads = ColumnState(
         C = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0),
         n = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0)
@@ -147,7 +143,7 @@ def run_model(column_params: ColumnParameters) ->  float:
     # stepsize_controller = diffrax.PIDController()
     stepsize_controller = diffrax.ConstantStepSize()
 
-    ads_event = diffrax.Event(adsorption_finish_event)
+    ads_event = diffrax.Event(make_adsorption_event(bed_utilization))
 
     solution_ads = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
@@ -170,11 +166,11 @@ def run_model(column_params: ColumnParameters) ->  float:
         n=SpatialDiscretisation(x0, x_final, n_ads[-1, :])
     )
 
-    column_params = column_params.replace(C_in=0, k_s=-column_params.k_s)
+    # Calculate potential loading before modifying column_params
+    potential_adsorbed = column_params.isotherm(column_params.C_in) * n
+    des_event = diffrax.Event(make_desorption_event(potential_adsorbed))
 
-    # Calculate initial loading for desorption event
-    initial_total = np.sum(n_ads[-1, :])
-    des_event = diffrax.Event(make_desorption_event(initial_total))
+    column_params = column_params.replace(C_in=0, k_s=-column_params.k_s)
 
     solution_des = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
@@ -187,7 +183,7 @@ def run_model(column_params: ColumnParameters) ->  float:
         saveat=saveat,
         stepsize_controller=stepsize_controller,
         event=des_event,
-        max_steps = int(1e5)
+        max_steps = int(1e6)
     )
 
     t_des, C_des, n_des = get_finish_state(solution=solution_des)
