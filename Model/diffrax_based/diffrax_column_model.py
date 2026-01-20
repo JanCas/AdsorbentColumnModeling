@@ -88,24 +88,20 @@ def adsorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwarg
     ratio = total_adsorbed / potential_adsorbed
 
     # Print every 100 seconds
-    lax.cond(
-        (t % 100) < 0.1,
-        lambda: jax.debug.print("t={t}, adsorption ratio={ratio}", t=t, ratio=ratio),
-        lambda: None
-    )
+    # lax.cond(
+    #     (t % 100) < 0.1,
+    #     lambda: jax.debug.print("t={t}, adsorption ratio={ratio}", t=t, ratio=ratio),
+    #     lambda: None
+    # )
     return ratio > .5
 
-def desorption_finish_event(t,y: ColumnState, params: ColumnParameters, **kwargs):
-    total_adsorbed = jnp.sum(y.n.vals)
-    
-
-    lax.cond(
-        (t % 100) < 0.1,
-        lambda: jax.debug.print("t={t}, adsorbed={total}", t=t, total=total_adsorbed),
-        lambda: None
-    )
-
-    return total_adsorbed < 1
+def make_desorption_event(initial_total):
+    """Create desorption event that stops when 99% of Li is recovered."""
+    def desorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
+        total_adsorbed = jnp.sum(y.n.vals)
+        fraction_remaining = total_adsorbed / initial_total
+        return fraction_remaining < 0.05  # Stop at 1% remaining
+    return desorption_finish_event
 
 
 def get_finish_state(solution):
@@ -133,7 +129,7 @@ def run_model(column_params: ColumnParameters) ->  float:
     #Spatial discretization
     x0 = 0
     x_final = column_params.L
-    n = 100
+    n = 25
     y0_ads = ColumnState(
         C = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0),
         n = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0)
@@ -172,11 +168,13 @@ def run_model(column_params: ColumnParameters) ->  float:
     y0_des = ColumnState(
         C=SpatialDiscretisation(x0, x_final, C_ads[-1, :]),
         n=SpatialDiscretisation(x0, x_final, n_ads[-1, :])
-    )     
+    )
 
     column_params = column_params.replace(C_in=0, k_s=-column_params.k_s)
 
-    des_event = diffrax.Event(desorption_finish_event)
+    # Calculate initial loading for desorption event
+    initial_total = np.sum(n_ads[-1, :])
+    des_event = diffrax.Event(make_desorption_event(initial_total))
 
     solution_des = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
@@ -248,6 +246,7 @@ def plot_desorption(t, C, n):
     ax1.grid(True)
     plt.show()
 
+'''
 if __name__ == "__main__":
     study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
 
@@ -258,7 +257,9 @@ if __name__ == "__main__":
     exp_curve = study.column_experiments.breakthrough_curves.filter(flowrate=8)[0]
 
     flowrate = study.column_experiments.superficial_flowrate_si()[2]
-    params = study.to_column_parameter(column_length, column_diameter, 50, flowrate)
+    u_super = float(study.column_experiments.superficial_velocity_si()[2])
+    print(u_super)
+    params = study.to_column_parameter(column_length, 50, u_super)
 
     (t_ads, C_ads, n_ads), (t_des, C_des, n_des) = run_model(params)
 
@@ -267,4 +268,4 @@ if __name__ == "__main__":
     plot_breakthrough(t_ads, C_ads, params, exp_curve)
     plot_desorption(t_des, C_des, n_des)
 
-
+'''

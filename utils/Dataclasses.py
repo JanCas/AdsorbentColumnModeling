@@ -717,8 +717,9 @@ class Study:
 
         return capacity_factors, damkohler_numbers
     
-    def to_column_parameter(self, L, D, C_in, Q) -> ColumnParameters:
-        u_inter = 4 * Q / (np.pi * D**2) /self.column_experiments.column_properties.porosity
+    def to_column_parameter(self, L, C_in, u_super) -> ColumnParameters:
+        # u_inter = 4 * Q / (np.pi * D**2) /self.column_experiments.column_properties.porosity
+        u_inter = u_super / self.column_experiments.column_properties.porosity
 
         kinetics_experiment = self.get_kinetics_experiment_from_concentration(C_in)
 
