@@ -17,10 +17,12 @@ class ColumnOptimizationProblem(ElementwiseProblem):
     
     def __init__(self, study: Study, C_in: float, L_bounds: tuple, u_s_bounds: tuple, bed_util_bounds: tuple):
         super().__init__(
-            n_var=3,
+            n_var=2,
             n_obj=1,
-            xl=[L_bounds[0], u_s_bounds[0], bed_util_bounds[0]],
-            xu=[L_bounds[1], u_s_bounds[1], bed_util_bounds[1]]
+            # xl=[L_bounds[0], u_s_bounds[0], bed_util_bounds[0]],
+            # xu=[L_bounds[1], u_s_bounds[1], bed_util_bounds[1]]
+            xl=[L_bounds[0], u_s_bounds[0]],
+            xu=[L_bounds[1], u_s_bounds[1]]
         )
 
         self.study = study
@@ -32,15 +34,17 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         self.rho_p = study.sorbent_properties.density_si
 
     def _evaluate(self, x, out, *args, **kwargs):
-        L, u_super, bed_util = float(x[0]), float(x[1]), float(x[2])
+        # L, u_super, bed_util = float(x[0]), float(x[1]), float(x[2])
+        L, u_super= float(x[0]), float(x[1])
         params = self.study.to_column_parameter(L=L, C_in=self.C_in, u_super=u_super)
 
-        (t_ads, C_ads, n_ads), (t_des, C_des, n_des) = run_model(params, bed_util)
+        # (t_ads, C_ads, n_ads), (t_des, C_des, n_des) = run_model(params, bed_util)
+        (t_ads, C_ads, n_ads), (t_des, C_des, n_des) = run_model(params, .5)
 
         sec = self._specific_energy_consumption(u_super=u_super, n_des=n_des, t_des=t_des)
 
 
-        print(f"L: {L:.2f}, u_super: {u_super:.5f}, bed_util: {bed_util:.4f}, sec: {sec:.3f}, t_ads: {t_ads[-1]:.1f},t_des: {t_des[-1]:.1f}")
+        print(f"L: {L:.2f}, u_super: {u_super:.5f}, bed_util: {.5}, sec: {sec:.3f}, t_ads: {t_ads[-1]:.1f},t_des: {t_des[-1]:.1f}")
         out["F"] = [sec]
 
     
@@ -74,7 +78,7 @@ def run_optimization(study: Study, C_in: float, L_bounds: tuple, u_bounds: tuple
     # X[0, :] = [1, .0001]
 
     algorithm = DE(pop_size=pop_size)
-    termination = DefaultSingleObjectiveTermination(ftol=1e-3, xtol=1e-3, period=10)
+    termination = DefaultSingleObjectiveTermination()
     res = minimize(problem, algorithm, termination, seed=seed, verbose=True)
 
     return res
