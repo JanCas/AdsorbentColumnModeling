@@ -58,6 +58,7 @@ class SpatialDiscretisation(eqx.Module):
 class ColumnState(eqx.Module):
     C: SpatialDiscretisation
     n: SpatialDiscretisation
+    cumulative_out: Float[Array, ""] = 0.0  # Integrated outlet flux over time
 
 @jax.jit(static_argnums=2)
 def column_ode(t, state: ColumnState, args: ColumnParameters):
@@ -67,7 +68,7 @@ def column_ode(t, state: ColumnState, args: ColumnParameters):
 
     n_star = args.isotherm(C.vals)
     # jax.debug.print("n_star={n}", n=n_star)
-    dn_dt = args.k_s * (n_star - n.vals)**2
+    dn_dt = args.k_s * (n_star - n.vals) * jnp.abs(n_star - n.vals)
 
     C_prev = jnp.roll(C.vals, shift=1)
     C_prev = C_prev.at[0].set(args.C_in)
@@ -77,9 +78,15 @@ def column_ode(t, state: ColumnState, args: ColumnParameters):
 
     dC_dt = -args.u_inter * advection_dc_dx - sorption
 
+    # Rate of material leaving the column (outlet flux)
+    # Flux = C_out * u_inter * epsilon (per unit cross-sectional area)
+    C_out = C.vals[-1]
+    d_cumulative_out_dt = C_out * args.u_inter * args.epsilon
+
     return ColumnState(
         C=SpatialDiscretisation(C.x0, C.x_final, dC_dt),
-        n=SpatialDiscretisation(n.x0, n.x_final, dn_dt)
+        n=SpatialDiscretisation(n.x0, n.x_final, dn_dt),
+        cumulative_out=d_cumulative_out_dt
     )
 
 def make_adsorption_event(bed_utilization):
@@ -99,6 +106,23 @@ def make_desorption_event(potential_adsorbed, threshold=0.02):
         return ratio < threshold
     return desorption_finish_event
 
+def make_adsorption_loss_event(loss_fraction):
+    """
+    Create adsorption event that stops when a fraction of incoming material is lost from outlet.
+
+    Args:
+        loss_fraction: Fraction of total incoming material lost (e.g., 0.05 for 5%)
+
+    Compares cumulative outlet to cumulative inlet:
+        cumulative_out / (C_in * u_inter * epsilon * t) > loss_fraction
+    """
+    def adsorption_loss_event(t, y, params: ColumnParameters, **kwargs):
+        cumulative_in = params.C_in * params.u_inter * params.epsilon * t
+        fraction_lost = jnp.where(cumulative_in > 0, y.cumulative_out / cumulative_in, 0.0)
+        return fraction_lost > loss_fraction
+
+    return adsorption_loss_event
+
 
 def get_finish_state(solution):
     t = np.array(solution.ts)
@@ -110,14 +134,33 @@ def get_finish_state(solution):
     n = np.array(solution.ys.n.vals)
     n = n[np.isfinite(n).all(axis=1)]
 
-    return t, C, n
+    cumulative_out = np.array(solution.ys.cumulative_out)
+    cumulative_out = cumulative_out[np.isfinite(cumulative_out)]
 
-def run_model(column_params: ColumnParameters, bed_utilization: float = .5) ->  float:
+    return t, C, n, cumulative_out
+
+def set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params: ColumnParameters) -> ColumnState:
+    """Create initial adsorption state with residual loading from previous desorption cycle.
+
+    n(x, t=0) = r_des * n_eq(C_in) uniformly across the column.
+    """
+    n_eq = column_params.isotherm(column_params.C_in)
+    initial_loading = desorption_threshold * n_eq
+    return ColumnState(
+        C=SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0.0),
+        n=SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: initial_loading),
+        cumulative_out=jnp.array(0.0)
+    )
+
+
+def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) ->  float:
     """
     Runs the diffrax model for the column sorption and returns the SEC
-     
-    :param column_params: Description
+
+    :param column_params: Column parameters
     :type column_params: ColumnParameters
+    :param loss_fraction: Fraction of incoming material lost before stopping adsorption (default 5%)
+    :type loss_fraction: float
     :return: SEC
     :rtype: float
     """
@@ -125,11 +168,8 @@ def run_model(column_params: ColumnParameters, bed_utilization: float = .5) ->  
     #Spatial discretization
     x0 = 0
     x_final = column_params.L
-    n = 10
-    y0_ads = ColumnState(
-        C = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0),
-        n = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0)
-    )
+    n = 5
+    y0_ads = set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params)
 
     #Temporal discretization
     t0 = 0
@@ -143,7 +183,7 @@ def run_model(column_params: ColumnParameters, bed_utilization: float = .5) ->  
     # stepsize_controller = diffrax.PIDController()
     stepsize_controller = diffrax.ConstantStepSize()
 
-    ads_event = diffrax.Event(make_adsorption_event(bed_utilization))
+    ads_event = diffrax.Event(make_adsorption_loss_event(loss_fraction))
 
     solution_ads = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
@@ -157,20 +197,24 @@ def run_model(column_params: ColumnParameters, bed_utilization: float = .5) ->  
         stepsize_controller=stepsize_controller,
         event=ads_event,
         max_steps=int(1e6),
-        # progress_meter=diffrax.TqdmProgressMeter()
     )
 
-    t_ads, C_ads, n_ads = get_finish_state(solution_ads)
+    t_ads, C_ads, n_ads, cumulative_out_ads = get_finish_state(solution_ads)
     y0_des = ColumnState(
         C=SpatialDiscretisation(x0, x_final, C_ads[-1, :]),
-        n=SpatialDiscretisation(x0, x_final, n_ads[-1, :])
+        n=SpatialDiscretisation(x0, x_final, n_ads[-1, :]),
+        cumulative_out=jnp.array(0.0)  # Reset for desorption phase
     )
+
+    # Compute adsorption finishing condition before modifying column_params
+    cumulative_in = column_params.C_in * column_params.u_inter * column_params.epsilon * t_ads[-1]
+    fraction_lost = cumulative_out_ads[-1] / cumulative_in if cumulative_in > 0 else 0.0
 
     # Calculate potential loading before modifying column_params
     potential_adsorbed = column_params.isotherm(column_params.C_in) * n
-    des_event = diffrax.Event(make_desorption_event(potential_adsorbed))
+    des_event = diffrax.Event(make_desorption_event(potential_adsorbed, desorption_threshold))
 
-    column_params = column_params.replace(C_in=0, k_s=-column_params.k_s)
+    column_params = column_params.replace(C_in=0)
 
     solution_des = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
@@ -186,10 +230,11 @@ def run_model(column_params: ColumnParameters, bed_utilization: float = .5) ->  
         max_steps = int(1e6)
     )
 
-    t_des, C_des, n_des = get_finish_state(solution=solution_des)
+    t_des, C_des, n_des, _ = get_finish_state(solution=solution_des)
 
-    return (t_ads, C_ads, n_ads), (t_des, C_des, n_des)
+    return (t_ads, C_ads, n_ads), (t_des, C_des, n_des), fraction_lost
 
+'''
 def plot_breakthrough(t, C, column_params: ColumnParameters, curve: BreakthroughCurve = None):
     """Plot the breakthrough curve (C_out/C_in vs BV)."""
     import matplotlib.pyplot as plt
@@ -242,7 +287,7 @@ def plot_desorption(t, C, n):
     ax1.grid(True)
     plt.show()
 
-'''
+
 if __name__ == "__main__":
     study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
 
