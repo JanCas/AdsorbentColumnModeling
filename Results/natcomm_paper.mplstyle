@@ -10,12 +10,12 @@ savefig.transparent: True
 font.family: serif
 font.serif: Times New Roman, Times, Computer Modern Roman, DejaVu Serif
 
-font.size: 8
-axes.labelsize: 8
-axes.titlesize: 8
+font.size: 12
+axes.labelsize: 12
+axes.titlesize: 12
 xtick.labelsize: 7
 ytick.labelsize: 7
-legend.fontsize: 7
+legend.fontsize: 12
 
 text.usetex: False
 axes.unicode_minus: True

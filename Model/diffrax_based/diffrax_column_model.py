@@ -60,7 +60,7 @@ class ColumnState(eqx.Module):
     n: SpatialDiscretisation
     cumulative_out: Float[Array, ""] = 0.0  # Integrated outlet flux over time
 
-@jax.jit(static_argnums=2)
+# @jax.jit(static_argnums=2)
 def column_ode(t, state: ColumnState, args: ColumnParameters):
     # jax.debug.print("args={a.C_in}", a=args)
     C = state.C
@@ -175,7 +175,8 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
     t0 = 0
     t_final = jnp.inf
     dt = 1
-    saveat = diffrax.SaveAt(t0=True, steps=True)
+    saveat_ads = diffrax.SaveAt(t1=True)  # Only final state
+    saveat_des = diffrax.SaveAt(t0=True, t1=True)  # Initial + final for li_recovered
 
     #Tolerances
     rtol=1e-6
@@ -193,7 +194,7 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
         dt0=dt,
         y0=y0_ads,
         args=column_params,
-        saveat=saveat,
+        saveat=saveat_ads,
         stepsize_controller=stepsize_controller,
         event=ads_event,
         max_steps=int(1e6),
@@ -224,13 +225,16 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
         dt0=dt,
         y0=y0_des,
         args=column_params,
-        saveat=saveat,
+        saveat=saveat_des,
         stepsize_controller=stepsize_controller,
         event=des_event,
         max_steps = int(1e6)
     )
 
     t_des, C_des, n_des, _ = get_finish_state(solution=solution_des)
+
+    # Clear diffrax compilation cache to prevent memory growth
+    diffrax.diffeqsolve._cached.clear_cache()
 
     return (t_ads, C_ads, n_ads), (t_des, C_des, n_des), fraction_lost
 
