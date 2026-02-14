@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cmcrameri.cm as cm
 from matplotlib import colormaps
+import time
 
 colormaps.register(cm.batlow, name="batlow")
 plt.style.use('natcomm_paper.mplstyle')
@@ -44,18 +45,20 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         L, u_super, des_threshold = float(x[0]), float(x[1]), float(x[2])
         params = self.study.to_column_parameter(L=L, C_in=self.C_in, u_super=u_super)
 
+        t0 = time.perf_counter()
         (t_ads, C_ads, n_ads), (t_des, C_des, n_des), fraction_lost = run_model(params, self.loss_fraction, des_threshold)
+        elapsed = time.perf_counter() - t0
 
-        sec, li_recovered = self._specific_energy_consumption(u_super=u_super, n_des=n_des, t_des=t_des)
+        sec, li_recovered = self._specific_energy_consumption(u_super=u_super, n_ads=n_ads, n_des=n_des, t_des=t_des)
 
         n_eq = float(params.isotherm(params.C_in))
-        bed_util_ads = np.mean(n_ads[-1, :]) / n_eq
-        bed_util_des = np.mean(n_des[-1, :]) / n_eq
+        bed_util_ads = np.mean(n_ads) / n_eq
+        bed_util_des = np.mean(n_des) / n_eq
 
-        t_cycle = t_des[-1]
+        t_cycle = float(t_des)
         productivity = li_recovered / t_cycle  # mol/m³/s
 
-        print(f"L: {L:.2f}, u_super: {u_super:.5f}, sec: {sec:.3f}, prod: {productivity:.6f}, t_ads: {t_ads[-1]:.1f}, t_des: {t_des[-1] - t_ads[-1]:.1f}, bed_util_ads: {bed_util_ads:.3f}, bed_util_des: {bed_util_des:.3f}, frac_lost: {fraction_lost:.3f}, li_recovered: {li_recovered: .3f}")
+        print(f"L: {L:.2f}, u_super: {u_super:.5f}, sec: {sec:.3f}, prod: {productivity:.6f}, t_ads: {float(t_ads):.1f}, t_des: {float(t_des) - float(t_ads):.1f}, bed_util_ads: {bed_util_ads:.3f}, bed_util_des: {bed_util_des:.3f}, des_th: {des_threshold},frac_lost: {float(fraction_lost):.3f}, li_recovered: {li_recovered: .3f}, time: {elapsed}")
         out["F"] = [sec, -productivity]  # Negative because we minimize (want max productivity)
 
     
@@ -65,19 +68,19 @@ class ColumnOptimizationProblem(ElementwiseProblem):
 
         return term1 + term2
     
-    def _li_recovered(self, n_des):
-        n_start = np.mean(n_des[0, :])
-        n_end = np.mean(n_des[-1, :])
+    def _li_recovered(self, n_ads, n_des):
+        n_start = np.mean(n_ads)
+        n_end = np.mean(n_des)
 
         total = (n_start - n_end) * (1-self.epsilon) * self.rho_p
         return total
 
-    def _specific_energy_consumption(self, u_super, n_des, t_des):
+    def _specific_energy_consumption(self, u_super, n_ads, n_des, t_des):
         dP_dL = self._pressure_drop_per_unit_length(u_super=u_super)
 
-        pumping_power = dP_dL * u_super * t_des[-1]
+        pumping_power = dP_dL * u_super * float(t_des)
 
-        li_recovered = self._li_recovered(n_des=n_des)
+        li_recovered = self._li_recovered(n_ads=n_ads, n_des=n_des)
 
         return pumping_power / li_recovered, li_recovered
 
@@ -93,8 +96,8 @@ def plot_pareto_front(res, save_path=None):
     ax.set_ylabel('Productivity (mol/m³/s)')
     ax.set_title('Pareto Front: SEC vs Productivity')
 
-    if save_path:
-        fig.savefig(save_path)
+    # if save_path:
+    #     fig.savefig(save_path)
     plt.show()
 
 
@@ -122,7 +125,7 @@ if __name__ == "__main__":
 
     study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
 
-    res, problem = run_optimization(study, 50, (.5, 4), (0.00005, .0099), (.02, .5), loss_fraction=args.loss_fraction)
+    res, problem = run_optimization(study, 50, (.5, 4), (0.00005, .0099), (.02, .1), loss_fraction=args.loss_fraction)
 
     print("\n" + "="*80)
     print("PARETO FRONT")

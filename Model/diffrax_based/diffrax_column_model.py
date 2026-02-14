@@ -6,7 +6,6 @@ import jax.lax as lax
 from jaxtyping import Array, Float
 import sys
 from pathlib import Path
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from utils.Dataclasses import ColumnParameters, Study, BreakthroughCurve
@@ -15,8 +14,8 @@ from collections.abc import Callable
 
 # Represents the interval [x0, x_final] discretised into n equally-spaced points.
 class SpatialDiscretisation(eqx.Module):
-    x0: float = eqx.field(static=True)
-    x_final: float = eqx.field(static=True)
+    x0: float
+    x_final: float
     vals: Float[Array, "n"]
 
     @classmethod
@@ -31,10 +30,7 @@ class SpatialDiscretisation(eqx.Module):
         return (self.x_final - self.x0) / (len(self.vals) - 1)
 
     def binop(self, other, fn):
-        if isinstance(other, SpatialDiscretisation):
-            if self.x0 != other.x0 or self.x_final != other.x_final:
-                raise ValueError("Mismatched spatial discretisations")
-            other = other.vals
+        other = other.vals
         return SpatialDiscretisation(self.x0, self.x_final, fn(self.vals, other))
 
     def __add__(self, other):
@@ -60,14 +56,13 @@ class ColumnState(eqx.Module):
     n: SpatialDiscretisation
     cumulative_out: Float[Array, ""] = 0.0  # Integrated outlet flux over time
 
-# @jax.jit(static_argnums=2)
 def column_ode(t, state: ColumnState, args: ColumnParameters):
     # jax.debug.print("args={a.C_in}", a=args)
     C = state.C
     n = state.n
 
-    n_star = args.isotherm(C.vals)
-    # jax.debug.print("n_star={n}", n=n_star)
+    n_star = jax.vmap(args.isotherm)(C.vals)
+    jax.debug.print("n_star={n}, C={C}", n=n_star, C=C.vals)
     dn_dt = args.k_s * (n_star - n.vals) * jnp.abs(n_star - n.vals)
 
     C_prev = jnp.roll(C.vals, shift=1)
@@ -103,6 +98,9 @@ def make_desorption_event(potential_adsorbed, threshold=0.02):
     def desorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
         total_adsorbed = jnp.sum(y.n.vals)
         ratio = total_adsorbed / potential_adsorbed
+        
+        # if t % 100:
+        jax.debug.print("t {t}, r {ratio}, th {threshold}", t=t, ratio=ratio, threshold=threshold)
         return ratio < threshold
     return desorption_finish_event
 
@@ -119,25 +117,22 @@ def make_adsorption_loss_event(loss_fraction):
     def adsorption_loss_event(t, y, params: ColumnParameters, **kwargs):
         cumulative_in = params.C_in * params.u_inter * params.epsilon * t
         fraction_lost = jnp.where(cumulative_in > 0, y.cumulative_out / cumulative_in, 0.0)
+        # jax.debug.print("{t}, {cumulative_in}, {fraction_lost}", t=t, cumulative_in=cumulative_in, fraction_lost=fraction_lost)
         return fraction_lost > loss_fraction
 
     return adsorption_loss_event
 
 
 def get_finish_state(solution):
-    t = np.array(solution.ts)
-    t = t[np.isfinite(t)]
+    valid = jnp.isfinite(solution.ts)
+    idx = jnp.sum(valid)-1
 
-    C = np.array(solution.ys.C.vals)
-    C = C[np.isfinite(C).all(axis=1)]
-
-    n = np.array(solution.ys.n.vals)
-    n = n[np.isfinite(n).all(axis=1)]
-
-    cumulative_out = np.array(solution.ys.cumulative_out)
-    cumulative_out = cumulative_out[np.isfinite(cumulative_out)]
-
-    return t, C, n, cumulative_out
+    return (
+        solution.ts[idx],
+        solution.ys.C.vals[idx],
+        solution.ys.n.vals[idx],
+        solution.ys.cumulative_out[idx]
+    )
 
 def set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params: ColumnParameters) -> ColumnState:
     """Create initial adsorption state with residual loading from previous desorption cycle.
@@ -146,13 +141,16 @@ def set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_pa
     """
     n_eq = column_params.isotherm(column_params.C_in)
     initial_loading = desorption_threshold * n_eq
+    print(n_eq)
+    print(initial_loading)
+    print(initial_loading / n_eq)
     return ColumnState(
         C=SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0.0),
         n=SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: initial_loading),
         cumulative_out=jnp.array(0.0)
     )
 
-
+# @eqx.filter_jit
 def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) ->  float:
     """
     Runs the diffrax model for the column sorption and returns the SEC
@@ -179,9 +177,9 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
     saveat_des = diffrax.SaveAt(t0=True, t1=True)  # Initial + final for li_recovered
 
     #Tolerances
-    rtol=1e-6
-    atol=1e-6
-    # stepsize_controller = diffrax.PIDController()
+    rtol=1e-3
+    atol=1e-3
+    # stepsize_controller = diffrax.PIDController(rtol=rtol, atol=atol)
     stepsize_controller = diffrax.ConstantStepSize()
 
     ads_event = diffrax.Event(make_adsorption_loss_event(loss_fraction))
@@ -197,22 +195,25 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
         saveat=saveat_ads,
         stepsize_controller=stepsize_controller,
         event=ads_event,
-        max_steps=int(1e6),
+        max_steps=2**20
     )
-
-    t_ads, C_ads, n_ads, cumulative_out_ads = get_finish_state(solution_ads)
+    print("Here")
+    t_ads_final, C_ads_final, n_ads_final, cumulative_out_ads_final = get_finish_state(solution_ads)
+    # jax.debug.print("{x}",x=C_ads_final)
+    # jax.debug.print("{x}",x=n_ads_final)
     y0_des = ColumnState(
-        C=SpatialDiscretisation(x0, x_final, C_ads[-1, :]),
-        n=SpatialDiscretisation(x0, x_final, n_ads[-1, :]),
+        C=SpatialDiscretisation(x0, x_final, C_ads_final),
+        n=SpatialDiscretisation(x0, x_final, n_ads_final),
         cumulative_out=jnp.array(0.0)  # Reset for desorption phase
     )
 
     # Compute adsorption finishing condition before modifying column_params
-    cumulative_in = column_params.C_in * column_params.u_inter * column_params.epsilon * t_ads[-1]
-    fraction_lost = cumulative_out_ads[-1] / cumulative_in if cumulative_in > 0 else 0.0
+    cumulative_in = column_params.C_in * column_params.u_inter * column_params.epsilon * t_ads_final
+    fraction_lost = jnp.where(cumulative_in > 0, cumulative_out_ads_final / cumulative_in,0)
 
     # Calculate potential loading before modifying column_params
     potential_adsorbed = column_params.isotherm(column_params.C_in) * n
+    print(f"p: {potential_adsorbed}")
     des_event = diffrax.Event(make_desorption_event(potential_adsorbed, desorption_threshold))
 
     column_params = column_params.replace(C_in=0)
@@ -220,7 +221,7 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
     solution_des = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
         solver=diffrax.Euler(),
-        t0 = t_ads[-1],
+        t0 = t_ads_final,
         t1=t_final,
         dt0=dt,
         y0=y0_des,
@@ -228,15 +229,12 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
         saveat=saveat_des,
         stepsize_controller=stepsize_controller,
         event=des_event,
-        max_steps = int(1e6)
+        max_steps = 2**20
     )
 
-    t_des, C_des, n_des, _ = get_finish_state(solution=solution_des)
+    t_des_final, C_des_final, n_des_final, _ = get_finish_state(solution=solution_des)
 
-    # Clear diffrax compilation cache to prevent memory growth
-    diffrax.diffeqsolve._cached.clear_cache()
-
-    return (t_ads, C_ads, n_ads), (t_des, C_des, n_des), fraction_lost
+    return (t_ads_final, C_ads_final, n_ads_final), (t_des_final, C_des_final, n_des_final), fraction_lost
 
 '''
 def plot_breakthrough(t, C, column_params: ColumnParameters, curve: BreakthroughCurve = None):
@@ -306,11 +304,11 @@ if __name__ == "__main__":
     print(u_super)
     params = study.to_column_parameter(column_length, 50, u_super)
 
-    (t_ads, C_ads, n_ads), (t_des, C_des, n_des) = run_model(params)
+    (t_ads, C_ads, n_ads), (t_des_final, C_des_final, n_des_final) = run_model(params)
 
     params = params.replace(C_in=50)
 
     plot_breakthrough(t_ads, C_ads, params, exp_curve)
-    plot_desorption(t_des, C_des, n_des)
+    plot_desorption(t_des_final, C_des_final, n_des_final)
 
 '''
