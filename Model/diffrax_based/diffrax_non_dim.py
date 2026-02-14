@@ -6,10 +6,9 @@ from jaxtyping import Array, Float
 from collections.abc import Callable
 import numpy as np
 
-# Represents the interval [x0, x_final] discretised into n equally-spaced points.
+# Represents values on a uniform spatial grid with fixed spacing δx.
 class SpatialDiscretisation(eqx.Module):
-    x0: float = eqx.field(static=True)
-    x_final: float = eqx.field(static=True)
+    δx: Float[Array, ""]
     vals: Float[Array, "n"]
 
     @classmethod
@@ -17,18 +16,15 @@ class SpatialDiscretisation(eqx.Module):
         if n < 2:
             raise ValueError("Must discretise [x0, x_final] into at least two points")
         vals = jax.vmap(fn)(jnp.linspace(x0, x_final, n))
-        return cls(x0, x_final, vals)
-
-    @property
-    def δx(self):
-        return (self.x_final - self.x0) / (len(self.vals) - 1)
+        δx = jnp.asarray((x_final - x0) / (n - 1), dtype=vals.dtype)
+        return cls(δx, vals)
 
     def binop(self, other, fn):
         if isinstance(other, SpatialDiscretisation):
-            if self.x0 != other.x0 or self.x_final != other.x_final:
+            if self.δx != other.δx:
                 raise ValueError("Mismatched spatial discretisations")
             other = other.vals
-        return SpatialDiscretisation(self.x0, self.x_final, fn(self.vals, other))
+        return SpatialDiscretisation(self.δx, fn(self.vals, other))
 
     def __add__(self, other):
         return self.binop(other, lambda x, y: x + y)
@@ -60,6 +56,12 @@ class ColumnState(eqx.Module):
     C_star: SpatialDiscretisation
     n_star: SpatialDiscretisation
 
+
+def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]) -> SpatialDiscretisation:
+    """Return ODE tangent with fixed grid spacing (dδx/dt = 0)."""
+    return SpatialDiscretisation(jnp.zeros_like(sd.δx), dvals_dt)
+
+
 class NonDimNumbers(eqx.Module):
     Da: float # Damkoehler number knL/u
     Lambda: float # Sorbent to fluid capacity ratio
@@ -88,8 +90,8 @@ def column_ode(t, state: ColumnState, non_dim_nums: NonDimNumbers):
 
     # jax.debug.breakpoint()
     return ColumnState(
-        C_star=SpatialDiscretisation(C_star.x0, C_star.x_final, dC_dt),
-        n_star=SpatialDiscretisation(n_star.x0, n_star.x_final, dn_dt)
+        C_star=_spatial_tangent(C_star, dC_dt),
+        n_star=_spatial_tangent(n_star, dn_dt)
     )
 
 def finish_event(t, y: ColumnState, *args, **kwargs):

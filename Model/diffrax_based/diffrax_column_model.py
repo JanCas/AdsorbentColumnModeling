@@ -12,10 +12,9 @@ from utils.Dataclasses import ColumnParameters, Study, BreakthroughCurve
 
 from collections.abc import Callable
 
-# Represents the interval [x0, x_final] discretised into n equally-spaced points.
+# Represents values on a uniform spatial grid with fixed spacing δx.
 class SpatialDiscretisation(eqx.Module):
-    x0: float
-    x_final: float
+    δx: Float[Array, ""]
     vals: Float[Array, "n"]
 
     @classmethod
@@ -23,15 +22,15 @@ class SpatialDiscretisation(eqx.Module):
         if n < 2:
             raise ValueError("Must discretise [x0, x_final] into at least two points")
         vals = jax.vmap(fn)(jnp.linspace(x0, x_final, n))
-        return cls(x0, x_final, vals)
-
-    @property
-    def δx(self):
-        return (self.x_final - self.x0) / (len(self.vals) - 1)
+        δx = jnp.asarray((x_final - x0) / (n - 1), dtype=vals.dtype)
+        return cls(δx, vals)
 
     def binop(self, other, fn):
-        other = other.vals
-        return SpatialDiscretisation(self.x0, self.x_final, fn(self.vals, other))
+        if isinstance(other, SpatialDiscretisation):
+            if self.δx != other.δx:
+                raise ValueError("Mismatched spatial discretisations")
+            other = other.vals
+        return SpatialDiscretisation(self.δx, fn(self.vals, other))
 
     def __add__(self, other):
         return self.binop(other, lambda x, y: x + y)
@@ -56,6 +55,11 @@ class ColumnState(eqx.Module):
     n: SpatialDiscretisation
     cumulative_out: Float[Array, ""] = 0.0  # Integrated outlet flux over time
 
+
+def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]) -> SpatialDiscretisation:
+    """Return ODE tangent with fixed grid spacing (dδx/dt = 0)."""
+    return SpatialDiscretisation(jnp.zeros_like(sd.δx), dvals_dt)
+
 def column_ode(t, state: ColumnState, args: ColumnParameters):
     # jax.debug.print("args={a.C_in}", a=args)
     C = state.C
@@ -79,8 +83,8 @@ def column_ode(t, state: ColumnState, args: ColumnParameters):
     d_cumulative_out_dt = C_out * args.u_inter * args.epsilon
 
     return ColumnState(
-        C=SpatialDiscretisation(C.x0, C.x_final, dC_dt),
-        n=SpatialDiscretisation(n.x0, n.x_final, dn_dt),
+        C=_spatial_tangent(C, dC_dt),
+        n=_spatial_tangent(n, dn_dt),
         cumulative_out=d_cumulative_out_dt
     )
 
@@ -202,8 +206,8 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
     # jax.debug.print("{x}",x=C_ads_final)
     # jax.debug.print("{x}",x=n_ads_final)
     y0_des = ColumnState(
-        C=SpatialDiscretisation(x0, x_final, C_ads_final),
-        n=SpatialDiscretisation(x0, x_final, n_ads_final),
+        C=SpatialDiscretisation(y0_ads.C.δx, C_ads_final),
+        n=SpatialDiscretisation(y0_ads.n.δx, n_ads_final),
         cumulative_out=jnp.array(0.0)  # Reset for desorption phase
     )
 
