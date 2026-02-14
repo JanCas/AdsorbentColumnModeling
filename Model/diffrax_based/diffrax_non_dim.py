@@ -60,10 +60,16 @@ def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]) -> 
 
 
 class NonDimNumbers(eqx.Module):
-    Da: float # Damkoehler number knL/u
-    Lambda: float # Sorbent to fluid capacity ratio
-    theta: float # isotherm steepness
-    epsilon: float # porosity in the column
+    Da: Float[Array, ""] # Damkoehler number knL/u
+    Lambda: Float[Array, ""] # Sorbent to fluid capacity ratio
+    theta: Float[Array, ""] # isotherm steepness
+    epsilon: Float[Array, ""] # porosity in the column
+
+    def __post_init__(self):
+        object.__setattr__(self, "Da", jnp.asarray(self.Da))
+        object.__setattr__(self, "Lambda", jnp.asarray(self.Lambda))
+        object.__setattr__(self, "theta", jnp.asarray(self.theta))
+        object.__setattr__(self, "epsilon", jnp.asarray(self.epsilon))
 
 def column_ode(t, state: ColumnState, non_dim_nums: NonDimNumbers):
     C_star = state.C_star
