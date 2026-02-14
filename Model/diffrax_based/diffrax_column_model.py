@@ -146,17 +146,12 @@ def set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_pa
     )
 
 @eqx.filter_jit
-def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) ->  float:
-    """
-    Runs the diffrax model for the column sorption and returns the SEC
-
-    :param column_params: Column parameters
-    :type column_params: ColumnParameters
-    :param loss_fraction: Fraction of incoming material lost before stopping adsorption (default 5%)
-    :type loss_fraction: float
-    :return: SEC
-    :rtype: float
-    """
+def _run_model_jit(
+    column_params: ColumnParameters,
+    loss_fraction: Float[Array, ""],
+    desorption_threshold: Float[Array, ""],
+) -> float:
+    """JIT-friendly model implementation with array-valued runtime inputs."""
 
     #Spatial discretization
     x0 = 0
@@ -228,6 +223,15 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
     t_des_final, C_des_final, n_des_final, _ = get_finish_state(solution=solution_des)
 
     return (t_ads_final, C_ads_final, n_ads_final), (t_des_final, C_des_final, n_des_final), fraction_lost
+
+
+def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) -> float:
+    """Run the column model while keeping frequently changed scalars as dynamic JAX inputs."""
+    return _run_model_jit(
+        column_params,
+        jnp.asarray(loss_fraction),
+        jnp.asarray(desorption_threshold),
+    )
 
 '''
 def plot_breakthrough(t, C, column_params: ColumnParameters, curve: BreakthroughCurve = None):
