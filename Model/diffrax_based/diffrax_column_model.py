@@ -26,11 +26,8 @@ class SpatialDiscretisation(eqx.Module):
         return cls(δx, vals)
 
     def binop(self, other, fn):
-        if isinstance(other, SpatialDiscretisation):
-            if self.δx != other.δx:
-                raise ValueError("Mismatched spatial discretisations")
-            other = other.vals
-        return SpatialDiscretisation(self.δx, fn(self.vals, other))
+        other_vals = other.vals if isinstance(other, SpatialDiscretisation) else other
+        return SpatialDiscretisation(self.δx, fn(self.vals, other_vals))
 
     def __add__(self, other):
         return self.binop(other, lambda x, y: x + y)
@@ -66,7 +63,6 @@ def column_ode(t, state: ColumnState, args: ColumnParameters):
     n = state.n
 
     n_star = jax.vmap(args.isotherm)(C.vals)
-    jax.debug.print("n_star={n}, C={C}", n=n_star, C=C.vals)
     dn_dt = args.k_s * (n_star - n.vals) * jnp.abs(n_star - n.vals)
 
     C_prev = jnp.roll(C.vals, shift=1)
@@ -103,8 +99,6 @@ def make_desorption_event(potential_adsorbed, threshold=0.02):
         total_adsorbed = jnp.sum(y.n.vals)
         ratio = total_adsorbed / potential_adsorbed
         
-        # if t % 100:
-        jax.debug.print("t {t}, r {ratio}, th {threshold}", t=t, ratio=ratio, threshold=threshold)
         return ratio < threshold
     return desorption_finish_event
 
@@ -145,16 +139,13 @@ def set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_pa
     """
     n_eq = column_params.isotherm(column_params.C_in)
     initial_loading = desorption_threshold * n_eq
-    print(n_eq)
-    print(initial_loading)
-    print(initial_loading / n_eq)
     return ColumnState(
         C=SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0.0),
         n=SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: initial_loading),
         cumulative_out=jnp.array(0.0)
     )
 
-# @eqx.filter_jit
+@eqx.filter_jit
 def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) ->  float:
     """
     Runs the diffrax model for the column sorption and returns the SEC
@@ -201,7 +192,6 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
         event=ads_event,
         max_steps=2**20
     )
-    print("Here")
     t_ads_final, C_ads_final, n_ads_final, cumulative_out_ads_final = get_finish_state(solution_ads)
     # jax.debug.print("{x}",x=C_ads_final)
     # jax.debug.print("{x}",x=n_ads_final)
@@ -217,7 +207,6 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
 
     # Calculate potential loading before modifying column_params
     potential_adsorbed = column_params.isotherm(column_params.C_in) * n
-    print(f"p: {potential_adsorbed}")
     des_event = diffrax.Event(make_desorption_event(potential_adsorbed, desorption_threshold))
 
     column_params = column_params.replace(C_in=0)

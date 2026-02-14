@@ -20,11 +20,8 @@ class SpatialDiscretisation(eqx.Module):
         return cls(δx, vals)
 
     def binop(self, other, fn):
-        if isinstance(other, SpatialDiscretisation):
-            if self.δx != other.δx:
-                raise ValueError("Mismatched spatial discretisations")
-            other = other.vals
-        return SpatialDiscretisation(self.δx, fn(self.vals, other))
+        other_vals = other.vals if isinstance(other, SpatialDiscretisation) else other
+        return SpatialDiscretisation(self.δx, fn(self.vals, other_vals))
 
     def __add__(self, other):
         return self.binop(other, lambda x, y: x + y)
