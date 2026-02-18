@@ -156,7 +156,7 @@ def _run_model_jit(
     #Spatial discretization
     x0 = 0
     x_final = column_params.L
-    n = 5
+    n = 150
     y0_ads = set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params)
 
     #Temporal discretization
@@ -167,16 +167,16 @@ def _run_model_jit(
     saveat_des = diffrax.SaveAt(t0=True, t1=True)  # Initial + final for li_recovered
 
     #Tolerances
-    rtol=1e-3
-    atol=1e-3
-    # stepsize_controller = diffrax.PIDController(rtol=rtol, atol=atol)
-    stepsize_controller = diffrax.ConstantStepSize()
+    rtol=1e-4
+    atol=1e-6
+    stepsize_controller = diffrax.PIDController(rtol=rtol, atol=atol)
+    # stepsize_controller = diffrax.ConstantStepSize()
 
     ads_event = diffrax.Event(make_adsorption_loss_event(loss_fraction))
 
     solution_ads = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
-        solver=diffrax.Euler(),
+        solver=diffrax.Tsit5(),
         t0=t0,
         t1=t_final,
         dt0=dt,
@@ -208,7 +208,7 @@ def _run_model_jit(
 
     solution_des = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
-        solver=diffrax.Euler(),
+        solver=diffrax.Tsit5(),
         t0 = t_ads_final,
         t1=t_final,
         dt0=dt,
@@ -220,9 +220,9 @@ def _run_model_jit(
         max_steps = 2**20
     )
 
-    t_des_final, C_des_final, n_des_final, _ = get_finish_state(solution=solution_des)
+    t_des_final, C_des_final, n_des_final, cumulative_out_des_final = get_finish_state(solution=solution_des)
 
-    return (t_ads_final, C_ads_final, n_ads_final), (t_des_final, C_des_final, n_des_final), fraction_lost
+    return (t_ads_final, C_ads_final, n_ads_final), (t_des_final, C_des_final, n_des_final, cumulative_out_des_final), fraction_lost
 
 
 def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) -> float:

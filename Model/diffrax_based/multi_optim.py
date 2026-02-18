@@ -11,9 +11,7 @@ import matplotlib.pyplot as plt
 import cmcrameri.cm as cm
 from matplotlib import colormaps
 import time
-
-colormaps.register(cm.batlow, name="batlow")
-plt.style.use('natcomm_paper.mplstyle')
+import JansPlottingStuff as JPS
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -46,10 +44,17 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         params = self.study.to_column_parameter(L=L, C_in=self.C_in, u_super=u_super)
 
         t0 = time.perf_counter()
-        (t_ads, C_ads, n_ads), (t_des, C_des, n_des), fraction_lost = run_model(params, self.loss_fraction, des_threshold)
+        (t_ads, C_ads, n_ads), (t_des, C_des, n_des, cumulative_out_des), fraction_lost = run_model(params, self.loss_fraction, des_threshold)
         elapsed = time.perf_counter() - t0
 
-        sec, li_recovered = self._specific_energy_consumption(u_super=u_super, n_ads=n_ads, n_des=n_des, t_des=t_des)
+        li_recovered = float(cumulative_out_des)
+
+        if li_recovered <= 0 or not np.isfinite(li_recovered):
+            print(f"L: {L:.2f}, u_super: {u_super:.5f} — INFEASIBLE (li_recovered={li_recovered:.3e}), time: {elapsed}")
+            out["F"] = [np.inf, np.inf]
+            return
+
+        sec = self._specific_energy_consumption(u_super=u_super, li_recovered=li_recovered, t_des=t_des, L=L)
 
         n_eq = float(params.isotherm(params.C_in))
         bed_util_ads = np.mean(n_ads) / n_eq
@@ -68,21 +73,12 @@ class ColumnOptimizationProblem(ElementwiseProblem):
 
         return term1 + term2
     
-    def _li_recovered(self, n_ads, n_des):
-        n_start = np.mean(n_ads)
-        n_end = np.mean(n_des)
-
-        total = (n_start - n_end) * (1-self.epsilon) * self.rho_p
-        return total
-
-    def _specific_energy_consumption(self, u_super, n_ads, n_des, t_des):
+    def _specific_energy_consumption(self, u_super, li_recovered, t_des, L):
         dP_dL = self._pressure_drop_per_unit_length(u_super=u_super)
 
-        pumping_power = dP_dL * u_super * float(t_des)
+        pumping_power = dP_dL * L * u_super * float(t_des)
 
-        li_recovered = self._li_recovered(n_ads=n_ads, n_des=n_des)
-
-        return pumping_power / li_recovered, li_recovered
+        return pumping_power / li_recovered
 
 
 def plot_pareto_front(res, save_path=None):
@@ -111,21 +107,22 @@ def run_optimization(study: Study, C_in: float, L_bounds: tuple, u_bounds: tuple
     termination = DefaultMultiObjectiveTermination(
         # xtol=1e-3,      # stop when design variables change < 0.1%
         # ftol=1e-3,      # stop when objective changes < 0.1%
-        period=10,      # check over last 10 generations
-        n_max_gen=50   # hard limit on generations
+        # period=10,      # check over last 10 generations
+        # n_max_gen=50   # hard limit on generations
     )
     res = minimize(problem, algorithm, termination, seed=seed, verbose=True)
 
     return res, problem
 
 if __name__ == "__main__":
+    JPS.apply()
     parser = argparse.ArgumentParser(description="Optimize column parameters for minimum SEC")
     parser.add_argument("-lf", "--loss-fraction", type=float, default=0.01, help="Fraction of incoming material lost before stopping adsorption (default: 0.01)")
     args = parser.parse_args()
 
     study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
 
-    res, problem = run_optimization(study, 50, (.5, 4), (0.00005, .0099), (.02, .1), loss_fraction=args.loss_fraction)
+    res, problem = run_optimization(study, 50, (.5, 500), (0.00005, .0099), (.02, .5), loss_fraction=args.loss_fraction)
 
     print("\n" + "="*80)
     print("PARETO FRONT")
