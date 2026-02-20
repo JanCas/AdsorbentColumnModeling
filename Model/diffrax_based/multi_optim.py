@@ -44,10 +44,15 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         params = self.study.to_column_parameter(L=L, C_in=self.C_in, u_super=u_super)
 
         t0 = time.perf_counter()
-        (t_ads, C_ads, n_ads), (t_des, C_des, n_des, cumulative_out_des), fraction_lost = run_model(params, self.loss_fraction, des_threshold)
+        (t_ads, C_ads, n_ads), (t_des, C_des, n_des, cumulative_out_des), fraction_lost, solver_ok = run_model(params, self.loss_fraction, des_threshold)
         elapsed = time.perf_counter() - t0
 
-        li_recovered = float(cumulative_out_des)
+        if not solver_ok:
+            print(f"L: {L:.2f}, u_super: {u_super:.5f} — SOLVER FAILED, time: {elapsed}")
+            out["F"] = [np.inf, np.inf]
+            return
+
+        li_recovered = self._li_recovered(n_ads, n_des, L)  # mol/m²
 
         if li_recovered <= 0 or not np.isfinite(li_recovered):
             print(f"L: {L:.2f}, u_super: {u_super:.5f} — INFEASIBLE (li_recovered={li_recovered:.3e}), time: {elapsed}")
@@ -61,7 +66,7 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         bed_util_des = np.mean(n_des) / n_eq
 
         t_cycle = float(t_des)
-        productivity = li_recovered / t_cycle  # mol/m³/s
+        productivity = li_recovered / t_cycle  # mol/(m²·s)
 
         print(f"L: {L:.2f}, u_super: {u_super:.5f}, sec: {sec:.3f}, prod: {productivity:.6f}, t_ads: {float(t_ads):.1f}, t_des: {float(t_des) - float(t_ads):.1f}, bed_util_ads: {bed_util_ads:.3f}, bed_util_des: {bed_util_des:.3f}, des_th: {des_threshold},frac_lost: {float(fraction_lost):.3f}, li_recovered: {li_recovered: .3f}, time: {elapsed}")
         out["F"] = [sec, -productivity]  # Negative because we minimize (want max productivity)
@@ -73,12 +78,21 @@ class ColumnOptimizationProblem(ElementwiseProblem):
 
         return term1 + term2
     
+    def _li_recovered(self, n_ads, n_des, L):
+        """Compute lithium recovered per unit cross-sectional area [mol/m²]."""
+        n_ads = np.asarray(n_ads)
+        n_des = np.asarray(n_des)
+        x = np.linspace(0.0, L, n_ads.shape[0])
+        delta_n = (np.trapezoid(n_ads, x) - np.trapezoid(n_des, x))  # mol·m/kg
+        return delta_n * self.rho_p * (1 - self.epsilon)  # mol/m²
+
     def _specific_energy_consumption(self, u_super, li_recovered, t_des, L):
+        """Compute SEC [J/mol]. Both pumping energy and li_recovered are per unit cross-sectional area."""
         dP_dL = self._pressure_drop_per_unit_length(u_super=u_super)
 
-        pumping_power = dP_dL * L * u_super * float(t_des)
+        pumping_energy = dP_dL * L * u_super * float(t_des)  # J/m²
 
-        return pumping_power / li_recovered
+        return pumping_energy / li_recovered  # J/mol
 
 
 def plot_pareto_front(res, save_path=None):
@@ -89,11 +103,11 @@ def plot_pareto_front(res, save_path=None):
     fig, ax = plt.subplots()
     ax.scatter(sec, productivity, c=range(len(sec)), cmap='batlow')
     ax.set_xlabel('SEC (J/mol)')
-    ax.set_ylabel('Productivity (mol/m³/s)')
+    ax.set_ylabel('Productivity (mol/(m²·s))')
     ax.set_title('Pareto Front: SEC vs Productivity')
 
-    # if save_path:
-    #     fig.savefig(save_path)
+    if save_path:
+        fig.savefig(save_path)
     plt.show()
 
 
@@ -118,11 +132,13 @@ if __name__ == "__main__":
     JPS.apply()
     parser = argparse.ArgumentParser(description="Optimize column parameters for minimum SEC")
     parser.add_argument("-lf", "--loss-fraction", type=float, default=0.01, help="Fraction of incoming material lost before stopping adsorption (default: 0.01)")
+    parser.add_argument("-br", "--brine_concentration", type=float, default=50, help="Incoming brine concentration in mol/m^3")
+
     args = parser.parse_args()
 
     study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
 
-    res, problem = run_optimization(study, 50, (.5, 500), (0.00005, .0099), (.02, .5), loss_fraction=args.loss_fraction)
+    res, problem = run_optimization(study, args.brine_concentration, (.5, 500), (0.00005, .0099), (.02, .5), loss_fraction=args.loss_fraction)
 
     print("\n" + "="*80)
     print("PARETO FRONT")
@@ -139,32 +155,39 @@ if __name__ == "__main__":
     min_sec_idx = np.argmin(res.F[:, 0])
     max_prod_idx = np.argmin(res.F[:, 1])  # Most negative = highest productivity
 
-    # Find elbow point (max distance from line connecting extremes)
+    # Find elbow point (max perpendicular distance from line connecting extremes)
     # Normalize objectives to [0,1] for fair distance calculation
     sec_vals = res.F[:, 0]
     prod_vals = -res.F[:, 1]  # Convert back to positive productivity
     sec_norm = (sec_vals - sec_vals.min()) / (sec_vals.max() - sec_vals.min() + 1e-10)
     prod_norm = (prod_vals - prod_vals.min()) / (prod_vals.max() - prod_vals.min() + 1e-10)
 
-    # Line from (0,1) to (1,0) in normalized space (min SEC has high prod_norm, max prod has high sec_norm)
-    # Distance from point (x,y) to line ax + by + c = 0: |ax + by + c| / sqrt(a² + b²)
-    # Line: x + y - 1 = 0 (connects (0,1) and (1,0))
-    distances = np.abs(sec_norm + prod_norm - 1) / np.sqrt(2)
+    # Line connecting the two extreme points in normalized space
+    p1 = np.array([sec_norm[min_sec_idx], prod_norm[min_sec_idx]])
+    p2 = np.array([sec_norm[max_prod_idx], prod_norm[max_prod_idx]])
+    # Distance from each point to the line through p1 and p2
+    d = p2 - p1
+    distances = np.abs(d[1] * (sec_norm - p1[0]) - d[0] * (prod_norm - p1[1])) / np.linalg.norm(d)
     elbow_idx = np.argmax(distances)
 
     print("\nEXTREME SOLUTIONS")
     print("-"*80)
     print("Minimum SEC:")
     print(f"  L={res.X[min_sec_idx, 0]:.4f} m, u={res.X[min_sec_idx, 1]:.6f} m/s, des_thresh={res.X[min_sec_idx, 2]:.4f}")
-    print(f"  SEC={res.F[min_sec_idx, 0]:.4f}, Productivity={-res.F[min_sec_idx, 1]:.6f} mol/m³/s")
+    print(f"  SEC={res.F[min_sec_idx, 0]:.4f}, Productivity={-res.F[min_sec_idx, 1]:.6f} mol/(m²·s)")
     print("\nMaximum Productivity:")
     print(f"  L={res.X[max_prod_idx, 0]:.4f} m, u={res.X[max_prod_idx, 1]:.6f} m/s, des_thresh={res.X[max_prod_idx, 2]:.4f}")
-    print(f"  SEC={res.F[max_prod_idx, 0]:.4f}, Productivity={-res.F[max_prod_idx, 1]:.6f} mol/m³/s")
+    print(f"  SEC={res.F[max_prod_idx, 0]:.4f}, Productivity={-res.F[max_prod_idx, 1]:.6f} mol/(m²·s)")
     print("\nElbow (Best Trade-off):")
     print(f"  L={res.X[elbow_idx, 0]:.4f} m, u={res.X[elbow_idx, 1]:.6f} m/s, des_thresh={res.X[elbow_idx, 2]:.4f}")
-    print(f"  SEC={res.F[elbow_idx, 0]:.4f}, Productivity={-res.F[elbow_idx, 1]:.6f} mol/m³/s")
+    print(f"  SEC={res.F[elbow_idx, 0]:.4f}, Productivity={-res.F[elbow_idx, 1]:.6f} mol/(m²·s)")
     print("-"*80)
     print(f"Generations: {res.algorithm.n_gen}")
     print("="*80)
+
+    # Save Pareto front data to CSV
+    pareto_data = np.column_stack([res.X, res.F[:, 0], -res.F[:, 1]])
+    header = "L,u_super,des_thresh,SEC_J_per_mol,Productivity_mol_per_m2_per_s"
+    np.savetxt(f"pareto_front_{args.loss_fraction}.csv", pareto_data, delimiter=",", header=header, comments="")
 
     plot_pareto_front(res, save_path=f"pareto_front_{args.loss_fraction}.svg")

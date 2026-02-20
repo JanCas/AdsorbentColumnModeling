@@ -156,7 +156,7 @@ def _run_model_jit(
     #Spatial discretization
     x0 = 0
     x_final = column_params.L
-    n = 150
+    n = 200
     y0_ads = set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params)
 
     #Temporal discretization
@@ -185,11 +185,13 @@ def _run_model_jit(
         saveat=saveat_ads,
         stepsize_controller=stepsize_controller,
         event=ads_event,
-        max_steps=2**20
+        max_steps=2**15,
+        throw=False
     )
     t_ads_final, C_ads_final, n_ads_final, cumulative_out_ads_final = get_finish_state(solution_ads)
-    # jax.debug.print("{x}",x=C_ads_final)
-    # jax.debug.print("{x}",x=n_ads_final)
+
+    ads_ok = diffrax.is_okay(solution_ads.result)
+
     y0_des = ColumnState(
         C=SpatialDiscretisation(y0_ads.C.δx, C_ads_final),
         n=SpatialDiscretisation(y0_ads.n.δx, n_ads_final),
@@ -217,12 +219,16 @@ def _run_model_jit(
         saveat=saveat_des,
         stepsize_controller=stepsize_controller,
         event=des_event,
-        max_steps = 2**20
+        max_steps = 2**15,
+        throw=False
     )
 
     t_des_final, C_des_final, n_des_final, cumulative_out_des_final = get_finish_state(solution=solution_des)
 
-    return (t_ads_final, C_ads_final, n_ads_final), (t_des_final, C_des_final, n_des_final, cumulative_out_des_final), fraction_lost
+    des_ok = diffrax.is_okay(solution_des.result)
+    solver_ok = ads_ok & des_ok
+
+    return (t_ads_final, C_ads_final, n_ads_final), (t_des_final, C_des_final, n_des_final, cumulative_out_des_final), fraction_lost, solver_ok
 
 
 def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) -> float:
