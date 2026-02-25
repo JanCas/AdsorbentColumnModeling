@@ -27,41 +27,33 @@ if __name__ == "__main__":
         label = get_brine_and_lf(path)
         df = pd.read_csv(path)
         l_df.append(df_label(label, df))
-
-    all_L = pd.concat([df["des_thresh"] for _, df in l_df])
-    norm = mpl.colors.Normalize(vmin=all_L.min(), vmax=all_L.max())
+    
+    b50_dfs = [(label, df) for label, df in l_df if label[0] == 50 and label[1] == 0.5]
+    all_L_over_u = pd.concat([df["L"] / df["u_super"] for _, df in b50_dfs])
+    norm = mpl.colors.Normalize(vmin=all_L_over_u.min(), vmax=all_L_over_u.max())
     cmap = plt.cm.get_cmap("batlow")
 
-    fig, ax = plt.subplots(1,2, sharey=True)
+    fig, ax = plt.subplots()
 
-    for label, df in l_df:
-        ax_used = None
-        match label[0]:
-            case 50:
-                ax_used = ax[0]
-            case 25:
-                ax_used = ax[1]
-
+    for label, df in b50_dfs:
         match label[1]:
             case 0.5:
                 marker = "+"
-                label = "lf=50"
+                label = r"$n_{extr}=50\%$"
             case 0.1:
                 marker = "*"
-                label = "lf=10"
+                label = r"$n_{extr}=90\%$"
             case 0.01:
                 marker = "."
-                label = "lf=1"
+                label = r"$n_{extr}=99\%$"
 
-        ax_used.scatter(df["SEC_J_per_mol"], df["Productivity_mol_per_m2_per_s"],
-                        c=df["des_thresh"], cmap=cmap, norm=norm, marker=marker, label=label)
+        ax.scatter(df["SEC_J_per_mol"], df["Productivity_mol_per_m2_per_s"],
+                   c=df["L"] / df["u_super"], cmap=cmap, norm=norm,
+                   marker=marker, label=label)
 
-    ax[0].set_xlabel("SEC")
-    ax[1].set_xlabel("SEC")
-    ax[0].set_ylabel("Prodcutivity")
-
-    ax[0].set_title("b50")
-    ax[1].set_title("b25")
+    ax.set_xlabel("SEC")
+    ax.set_ylabel("Productivity (mol/m^3 s)")
+    ax.set_title("b50")
     plt.legend()
-    fig.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, label="des_thresh")
+    fig.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, label="L/u (s)")
     plt.show()
