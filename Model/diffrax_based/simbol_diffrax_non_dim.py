@@ -97,7 +97,7 @@ if __name__ == "__main__":
     tau_des      = np.zeros(n_evals)
     U_b          = np.zeros(n_evals)
     eta_li       = np.zeros(n_evals)
-    R_des        = np.zeros(n_evals)
+    R_outlet_des        = np.zeros(n_evals)
     sec_star     = np.zeros(n_evals)
     productivity = np.zeros(n_evals)
 
@@ -118,7 +118,7 @@ if __name__ == "__main__":
             tau_des[i]      = result[1]
             U_b[i]          = result[2]
             eta_li[i]       = result[3]
-            R_des[i]        = result[4][0]
+            R_outlet_des[i]        = result[4][0]
             sec_star[i]     = result[5][0]
             productivity[i] = result[6][0]
 
@@ -138,9 +138,9 @@ if __name__ == "__main__":
         "tau_des":  ("Sobol — Desorption time",          tau_des),
         "U_b":      ("Sobol — Bed utilisation",           U_b),
         "eta_li":   ("Sobol — Li removal efficiency",     eta_li),
-        "R_des":    ("Sobol — Li recovered (desorption)", R_des),
+        "R_outlet_des":    ("Sobol — Li recovered (desorption)", R_outlet_des),
         "sec_star":     ("Sobol — SEC*",                      sec_star),
-        "productivity": ("Sobol — Productivity (R_des/τ_cycle)", productivity),
+        "productivity": ("Sobol — Productivity (R_outlet_des/τ_cycle)", productivity),
     }
 
     for key, (title, values) in outputs.items():
@@ -169,7 +169,7 @@ if __name__ == "__main__":
         "tau_des":      tau_des,
         "U_b":          U_b,
         "eta_li":       eta_li,
-        "R_des":        R_des,
+        "R_outlet_des":        R_outlet_des,
         "sec_star":     sec_star,
         "productivity": productivity,
     }).to_csv("sobol_cycle_samples.csv", index=False)

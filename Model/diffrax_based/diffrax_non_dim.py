@@ -54,6 +54,7 @@ def langmuir_isotherm_non_dim(C_star, theta):
 class ColumnState(eqx.Module):
     C_star: SpatialDiscretisation
     n_star: SpatialDiscretisation
+    R_outlet: Float[Array, ""]        # ∫ C*(ζ=1) dτ
 
 
 def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]):
@@ -109,10 +110,15 @@ def column_ode(t, state: ColumnState, args: ColumnArgs):
     C_prev = jnp.roll(C.vals, 1).at[0].set(args.c_inlet)
     advection = (1.0 / args.epsilon) * (C.vals - C_prev) / C.δx
     dC_dt = -advection - args.Lambda * dn_dt
+    
+    jax.debug.print("Hello1")
+    R_outlet = C.vals[-1]
+    jax.debug.print("Hello2")
 
     return ColumnState(
         C_star=_spatial_tangent(C, dC_dt),
         n_star=_spatial_tangent(n, dn_dt),
+        R_outlet=C.vals[-1],           # dR_outlet/dτ = C*(ζ=1, τ)
     )
 
 
@@ -152,6 +158,7 @@ def _empty_state():
     return ColumnState(
         C_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: 0.0),
         n_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: 0.0),
+        R_outlet=jnp.array(0.0),
     )
 
 
@@ -203,15 +210,10 @@ def run_cycle(
     tau_des   - dimensionless desorption time at cutoff
     U_b       - bed utilisation at end of adsorption
     eta_li    - average Li removal efficiency during adsorption
-    R_des     - dimensionless Li recovered during desorption
-    sec_star  - nondimensional specific energy consumption
-    productivity - R_des / (tau_ads + tau_des), Li recovered per unit cycle time
+    R_outlet_des - dimensionless Li collected at outlet during desorption ∫C*(ζ=1)dτ
+    sec_star     - nondimensional specific energy consumption
+    productivity - R_outlet_des / (tau_ads + tau_des), Li recovered per unit cycle time
     """
-    c_thresh_ads = jnp.asarray(c_thresh_ads)
-    c_thresh_des = jnp.asarray(c_thresh_des)
-    eta_p = jnp.asarray(eta_p)
-    Psi = jnp.asarray(Psi)
-
     zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)
 
     # ---- Phase 1: Adsorption ------------------------------------------------
@@ -233,25 +235,24 @@ def run_cycle(
     ads_final = ads_sol.ys
     tau_ads = ads_sol.ts[0]
 
-    # Mass-balance:  R_ads = ε [∫C* dζ + Λ ∫n* dζ]  (IC is zero everywhere)
-    R_ads = non_dim.epsilon * (
-        jnp.trapezoid(ads_final.C_star.vals, zeta)
-        + non_dim.Lambda * jnp.trapezoid(ads_final.n_star.vals, zeta)
-    )
-    eta_li = (R_ads / tau_ads)[0]
 
     # Bed utilisation
     U_b = jnp.trapezoid(ads_final.n_star.vals, zeta)[0]
 
     # ---- Phase 2: Desorption ------------------------------------------------
     des_args = ColumnArgs.from_non_dim(non_dim, c_inlet=0.0)
+    des_y0 = ColumnState(
+        C_star=ads_final.C_star,
+        n_star=ads_final.n_star,
+        R_outlet=jnp.array(0.0),       # reset accumulator for desorption
+    )
     des_sol = diffrax.diffeqsolve(
         diffrax.ODETerm(column_ode),
         _SOLVER,
         t0=0.0,
         t1=jnp.inf,
         dt0=_DT0,
-        y0=ads_final,
+        y0=des_y0,
         saveat=diffrax.SaveAt(t1=True),
         stepsize_controller=_CONTROLLER,
         event=diffrax.Event(make_des_event(c_thresh_des)),
@@ -262,20 +263,17 @@ def run_cycle(
     des_final = des_sol.ys
     tau_des = des_sol.ts[0]
 
-    # Mass-balance:  R_des = ε {[∫C*₀ - ∫C*_f] + Λ [∫n*₀ - ∫n*_f]}
-    R_des = non_dim.epsilon * (
-        (jnp.trapezoid(ads_final.C_star.vals, zeta) - jnp.trapezoid(des_final.C_star.vals, zeta))
-        + non_dim.Lambda * (jnp.trapezoid(ads_final.n_star.vals, zeta) - jnp.trapezoid(des_final.n_star.vals, zeta))
-    )
+    # Li collected at the outlet during desorption: ∫₀^τ_des C*(ζ=1, τ) dτ
+    R_outlet_des = des_final.R_outlet[0]
 
-    # Guard against R_des ~ 0 (would blow up SEC*)
-    R_des = jnp.maximum(R_des, 1e-12)[0]
+    # Guard against R_outlet_des ~ 0 (would blow up SEC*)
+    R_outlet_des = jnp.maximum(R_outlet_des, 1e-12)
 
     # ---- Full-cycle metrics ---------------------------------------------------
-    sec_star = compute_sec_star(non_dim.epsilon, eta_p, tau_ads, tau_des, R_des, Psi)
-    productivity = R_des / (tau_ads + tau_des)
+    sec_star = compute_sec_star(non_dim.epsilon, eta_p, tau_ads, tau_des, R_outlet_des, Psi)
+    productivity = R_outlet_des / (tau_ads + tau_des)
 
-    return tau_ads, tau_des, U_b, eta_li, R_des, sec_star, productivity
+    return tau_ads, tau_des, U_b, R_outlet_des, sec_star, productivity
 
 
 # ---------------------------------------------------------------------------
