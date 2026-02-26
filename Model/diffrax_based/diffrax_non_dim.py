@@ -4,9 +4,13 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 from collections.abc import Callable
-import numpy as np
 
-# Represents values on a uniform spatial grid with fixed spacing δx.
+N_SPATIAL = 20  # number of spatial grid points
+
+
+# ---------------------------------------------------------------------------
+# Spatial discretisation (unchanged)
+# ---------------------------------------------------------------------------
 class SpatialDiscretisation(eqx.Module):
     δx: Float[Array, ""]
     vals: Float[Array, "n"]
@@ -25,45 +29,45 @@ class SpatialDiscretisation(eqx.Module):
 
     def __add__(self, other):
         return self.binop(other, lambda x, y: x + y)
-
     def __mul__(self, other):
         return self.binop(other, lambda x, y: x * y)
-
     def __radd__(self, other):
         return self.binop(other, lambda x, y: y + x)
-
     def __rmul__(self, other):
         return self.binop(other, lambda x, y: y * x)
-
     def __sub__(self, other):
         return self.binop(other, lambda x, y: x - y)
-
     def __rsub__(self, other):
         return self.binop(other, lambda x, y: y - x)
 
+
+# ---------------------------------------------------------------------------
+# Isotherm
+# ---------------------------------------------------------------------------
 def langmuir_isotherm_non_dim(C_star, theta):
-    return (1+theta)*C_star/(1+theta*C_star)
+    return (1 + theta) * C_star / (1 + theta * C_star)
 
-def filter_inf(arr):
-    if arr.ndim == 2:
-        return arr[~np.isinf(arr).any(axis=1)]
-    return arr[~np.isinf(arr)]
 
+# ---------------------------------------------------------------------------
+# Column state
+# ---------------------------------------------------------------------------
 class ColumnState(eqx.Module):
     C_star: SpatialDiscretisation
     n_star: SpatialDiscretisation
 
 
-def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]) -> SpatialDiscretisation:
-    """Return ODE tangent with fixed grid spacing (dδx/dt = 0)."""
+def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]):
     return SpatialDiscretisation(jnp.zeros_like(sd.δx), dvals_dt)
 
 
+# ---------------------------------------------------------------------------
+# Dimensionless numbers (physical parameters only)
+# ---------------------------------------------------------------------------
 class NonDimNumbers(eqx.Module):
-    Da: Float[Array, ""] # Damkoehler number knL/u
-    Lambda: Float[Array, ""] # Sorbent to fluid capacity ratio
-    theta: Float[Array, ""] # isotherm steepness
-    epsilon: Float[Array, ""] # porosity in the column
+    Da: Float[Array, ""]       # Damkoehler number  kn L / u
+    Lambda: Float[Array, ""]   # sorbent-to-fluid capacity ratio
+    theta: Float[Array, ""]    # isotherm steepness
+    epsilon: Float[Array, ""]  # bed porosity
 
     def __post_init__(self):
         object.__setattr__(self, "Da", jnp.asarray(self.Da))
@@ -71,112 +75,248 @@ class NonDimNumbers(eqx.Module):
         object.__setattr__(self, "theta", jnp.asarray(self.theta))
         object.__setattr__(self, "epsilon", jnp.asarray(self.epsilon))
 
-def column_ode(t, state: ColumnState, non_dim_nums: NonDimNumbers):
-    C_star = state.C_star
-    n_star = state.n_star
 
-    Da= non_dim_nums.Da
-    Lambda = non_dim_nums.Lambda
-    theta = non_dim_nums.theta
-    epsilon = non_dim_nums.epsilon
+# ---------------------------------------------------------------------------
+# ODE args passed to diffrax (includes inlet BC)
+# ---------------------------------------------------------------------------
+class ColumnArgs(eqx.Module):
+    Da: Float[Array, ""]
+    Lambda: Float[Array, ""]
+    theta: Float[Array, ""]
+    epsilon: Float[Array, ""]
+    c_inlet: Float[Array, ""]   # 1.0 for adsorption, 0.0 for desorption
 
-    n_eq_star = jax.vmap(lambda c: langmuir_isotherm_non_dim(c, theta))(C_star.vals)
-    dn_dt = Da * (n_eq_star - n_star.vals) ** 2
+    @classmethod
+    def from_non_dim(cls, nd: NonDimNumbers, c_inlet: float):
+        return cls(
+            Da=nd.Da, Lambda=nd.Lambda, theta=nd.theta,
+            epsilon=nd.epsilon, c_inlet=jnp.asarray(c_inlet),
+        )
 
-    C_star_prev = jnp.roll(C_star.vals, 1)
-    C_star_prev = C_star_prev.at[0].set(1) # inlet boundary condition
 
-    advection_dc_dx = 1 / epsilon * (C_star.vals - C_star_prev) / C_star.δx
-    sorption = Lambda * dn_dt
+# ---------------------------------------------------------------------------
+# ODE right-hand side  (standard LDF kinetics)
+# ---------------------------------------------------------------------------
+def column_ode(t, state: ColumnState, args: ColumnArgs):
+    C = state.C_star
+    n = state.n_star
 
-    dC_dt = -advection_dc_dx - sorption
+    n_eq = langmuir_isotherm_non_dim(C.vals, args.theta)
 
-    # jax.debug.breakpoint()
+    # Standard LDF — signed, so desorption works naturally
+    dn_dt = args.Da * (n_eq - n.vals)
+
+    C_prev = jnp.roll(C.vals, 1).at[0].set(args.c_inlet)
+    advection = (1.0 / args.epsilon) * (C.vals - C_prev) / C.δx
+    dC_dt = -advection - args.Lambda * dn_dt
+
     return ColumnState(
-        C_star=_spatial_tangent(C_star, dC_dt),
-        n_star=_spatial_tangent(n_star, dn_dt)
+        C_star=_spatial_tangent(C, dC_dt),
+        n_star=_spatial_tangent(n, dn_dt),
     )
 
-def finish_event(t, y: ColumnState, *args, **kwargs):
 
-    return y.C_star.vals[-1] >= .05
+# ---------------------------------------------------------------------------
+# Event functions (closure pattern — threshold captured at creation time)
+# ---------------------------------------------------------------------------
+def make_ads_event(c_thresh):
+    """Stop adsorption when outlet concentration reaches *c_thresh*."""
+    def _event(t, y: ColumnState, args, **kwargs):
+        return y.C_star.vals[-1] >= c_thresh
+    return _event
 
-@jax.jit
-def run_wrapper(non_dim_nums: NonDimNumbers):
+
+def make_des_event(c_thresh):
+    """Stop desorption when mean bed loading drops below *c_thresh*."""
+    def _event(t, y: ColumnState, args, **kwargs):
+        return jnp.mean(y.n_star.vals) <= c_thresh
+    return _event
+
+
+# ---------------------------------------------------------------------------
+# Shared solver settings
+# ---------------------------------------------------------------------------
+_SOLVER = diffrax.Tsit5()
+_RTOL = 1e-3
+_ATOL = 1e-6
+_DT0 = 1e-4
+_MAX_STEPS = 5_000_000
+
+
+_CONTROLLER = diffrax.PIDController(
+    pcoeff=0.3, icoeff=0.4, rtol=_RTOL, atol=_ATOL
+)
+
+
+def _empty_state():
+    return ColumnState(
+        C_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: 0.0),
+        n_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: 0.0),
+    )
+
+
+
+# ---------------------------------------------------------------------------
+# Nondimensional SEC*
+#
+#   SEC* = 150 (1-ε)² / ε³  ·  (τ_ads + Ψ τ_des) / (η_p R_des)
+#
+#   Dimensional recovery:  SEC = SEC* · μ u_s N / (c₀ d_p)
+# ---------------------------------------------------------------------------
+def compute_sec_star(epsilon, eta_p, tau_ads, tau_des, R_des, Psi=1.0):
+    hydraulic = 150.0 * (1.0 - epsilon) ** 2 / (epsilon ** 3)
+    return hydraulic * (tau_ads + Psi * tau_des) / (eta_p * R_des)
+
+
+# ---------------------------------------------------------------------------
+# Main cycle solver
+# ---------------------------------------------------------------------------
+@eqx.filter_jit
+def run_cycle(
+    non_dim: NonDimNumbers,
+    c_thresh_ads: Float[Array, ""],
+    c_thresh_des: Float[Array, ""],
+    eta_p: Float[Array, ""],
+    Psi: Float[Array, ""],
+):
     """
-        Docstring for run_wrapper
+    Run a full adsorption-desorption cycle and return performance metrics.
 
-        :param non_dim_nums: Description
-        :type non_dim_nums: NonDimNumbers
+    Parameters
+    ----------
+    non_dim : NonDimNumbers
+        Physical dimensionless groups (Da, Lambda, theta, epsilon).
+    c_thresh_ads : float
+        Outlet concentration threshold to end adsorption  (0 < . < 1).
+    c_thresh_des : float
+        Outlet concentration threshold to end desorption   (0 < . < 1).
+        Desorption stops when the elution peak has passed and the outlet
+        drops below this value.
+    eta_p : float
+        Pump efficiency.
+    Psi : float
+        Viscosity-velocity ratio  mu_des u_des / (mu_ads u_ads).  Default 1.
+
+    Returns
+    -------
+    tau_ads   - dimensionless adsorption time at cutoff
+    tau_des   - dimensionless desorption time at cutoff
+    U_b       - bed utilisation at end of adsorption
+    eta_li    - average Li removal efficiency during adsorption
+    R_des     - dimensionless Li recovered during desorption
+    sec_star  - nondimensional specific energy consumption
+    productivity - R_des / (tau_ads + tau_des), Li recovered per unit cycle time
     """
-    ode_term = diffrax.ODETerm(column_ode)
-    
-    # Spatial discretisation
-    x0 = 0
-    x_final = 1
-    n = 20
-    y0 = ColumnState( 
-        C_star = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0),
-        n_star = SpatialDiscretisation.discretise_fn(x0, x_final, n, lambda x: 0)
+    c_thresh_ads = jnp.asarray(c_thresh_ads)
+    c_thresh_des = jnp.asarray(c_thresh_des)
+    eta_p = jnp.asarray(eta_p)
+    Psi = jnp.asarray(Psi)
+
+    zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)
+
+    # ---- Phase 1: Adsorption ------------------------------------------------
+    ads_args = ColumnArgs.from_non_dim(non_dim, c_inlet=1.0)
+    ads_sol = diffrax.diffeqsolve(
+        diffrax.ODETerm(column_ode),
+        _SOLVER,
+        t0=0.0,
+        t1=jnp.inf,
+        dt0=_DT0,
+        y0=_empty_state(),
+        saveat=diffrax.SaveAt(t1=True),
+        stepsize_controller=_CONTROLLER,
+        event=diffrax.Event(make_ads_event(c_thresh_ads)),
+        args=ads_args,
+        max_steps=_MAX_STEPS,
     )
 
-    # Temporal discretisation
-    t0 = 0
-    t_final = jnp.inf
-    dt = 0.0001
-    saveat = diffrax.SaveAt(t0=True, steps=True)
+    ads_final = ads_sol.ys
+    tau_ads = ads_sol.ts[0]
 
-    # Tolerances
-    rtol = 1e-3
-    atol = 1e-6
-    stepsize_controller = diffrax.PIDController(
-        pcoeff=0.3, icoeff=0.4, rtol=rtol, atol=atol, dtmax=0.001
+    # Mass-balance:  R_ads = ε [∫C* dζ + Λ ∫n* dζ]  (IC is zero everywhere)
+    R_ads = non_dim.epsilon * (
+        jnp.trapezoid(ads_final.C_star.vals, zeta)
+        + non_dim.Lambda * jnp.trapezoid(ads_final.n_star.vals, zeta)
+    )
+    eta_li = (R_ads / tau_ads)[0]
+
+    # Bed utilisation
+    U_b = jnp.trapezoid(ads_final.n_star.vals, zeta)[0]
+
+    # ---- Phase 2: Desorption ------------------------------------------------
+    des_args = ColumnArgs.from_non_dim(non_dim, c_inlet=0.0)
+    des_sol = diffrax.diffeqsolve(
+        diffrax.ODETerm(column_ode),
+        _SOLVER,
+        t0=0.0,
+        t1=jnp.inf,
+        dt0=_DT0,
+        y0=ads_final,
+        saveat=diffrax.SaveAt(t1=True),
+        stepsize_controller=_CONTROLLER,
+        event=diffrax.Event(make_des_event(c_thresh_des)),
+        args=des_args,
+        max_steps=_MAX_STEPS,
     )
 
-    event = diffrax.Event(finish_event)
+    des_final = des_sol.ys
+    tau_des = des_sol.ts[0]
 
-    solver = diffrax.Tsit5()
+    # Mass-balance:  R_des = ε {[∫C*₀ - ∫C*_f] + Λ [∫n*₀ - ∫n*_f]}
+    R_des = non_dim.epsilon * (
+        (jnp.trapezoid(ads_final.C_star.vals, zeta) - jnp.trapezoid(des_final.C_star.vals, zeta))
+        + non_dim.Lambda * (jnp.trapezoid(ads_final.n_star.vals, zeta) - jnp.trapezoid(des_final.n_star.vals, zeta))
+    )
+
+    # Guard against R_des ~ 0 (would blow up SEC*)
+    R_des = jnp.maximum(R_des, 1e-12)[0]
+
+    # ---- Full-cycle metrics ---------------------------------------------------
+    sec_star = compute_sec_star(non_dim.epsilon, eta_p, tau_ads, tau_des, R_des, Psi)
+    productivity = R_des / (tau_ads + tau_des)
+
+    return tau_ads, tau_des, U_b, eta_li, R_des, sec_star, productivity
+
+
+# ---------------------------------------------------------------------------
+# Convenience: adsorption-only wrapper (backward compatible)
+# ---------------------------------------------------------------------------
+@eqx.filter_jit
+def run_adsorption_only(non_dim: NonDimNumbers, c_thresh: float = 0.05, eta_p: float = 0.7):
+    """Single-phase adsorption.  Returns (tau_break, U_b, eta_li, sec_star)."""
+    c_thresh = jnp.asarray(c_thresh)
+    eta_p = jnp.asarray(eta_p)
+
+    zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)
+
+    args = ColumnArgs.from_non_dim(non_dim, c_inlet=1.0)
     sol = diffrax.diffeqsolve(
-        ode_term,
-        solver,
-        t0,
-        t_final,
-        dt,
-        y0,
-        saveat=saveat,
-        stepsize_controller=stepsize_controller,
-        event=event,
-        args=non_dim_nums,
-        max_steps=5_000_000,
+        diffrax.ODETerm(column_ode),
+        _SOLVER,
+        t0=0.0,
+        t1=jnp.inf,
+        dt0=_DT0,
+        y0=_empty_state(),
+        saveat=diffrax.SaveAt(t1=True),
+        stepsize_controller=_CONTROLLER,
+        event=diffrax.Event(make_ads_event(c_thresh)),
+        args=args,
+        max_steps=_MAX_STEPS,
     )
-     # Stay in JAX - get the last valid index using the event
-    n_star_vals = sol.ys.n_star.vals
-    ts = sol.ts
-    
-    # Use jnp.where to handle potential inf values
-    valid_mask = jnp.isfinite(ts)
-    last_idx = jnp.sum(valid_mask) - 1
-    
-    n_star_final = n_star_vals[last_idx]
-    t_f = ts[last_idx]
-    U_b = jnp.trapezoid(n_star_final, jnp.linspace(0, 1, n))
-    
-    return t_f, U_b
 
-    
-# if __name__ == "__main__":
+    final = sol.ys
+    tau_break = sol.ts[0]
 
-#     non_dim_numbers = NonDimNumbers(
-#         Da=9, Lambda=9, epsilon=.35, theta=9
-#     )
+    R_ads = non_dim.epsilon * (
+        jnp.trapezoid(final.C_star.vals, zeta)
+        + non_dim.Lambda * jnp.trapezoid(final.n_star.vals, zeta)
+    )
+    eta_li = R_ads / tau_break
 
-#     sol = run_wrapper(non_dim_nums=non_dim_numbers)
-#     x0 = np.asarray(sol.ys.C_star.vals)
-#     n = np.asarray(sol.ys.n_star.vals)
+    U_b = jnp.trapezoid(final.n_star.vals, zeta)
 
-#     x = filter_inf(x0)
-#     n = filter_inf(n)
-#     bed_util = np.trapezoid(n[-1, :], np.linspace(0,1,10))
-#     print(bed_util)
-#     t = filter_inf(np.asarray(sol.ts))
-#     print("Done")
+    sec_star = 150.0 * (1.0 - non_dim.epsilon) ** 2 / (
+        non_dim.epsilon ** 3 * eta_p * eta_li
+    )
+
+    return tau_break, U_b, eta_li, sec_star
