@@ -16,25 +16,25 @@ import jax
 # Sobol problem definition  (5 parameters)
 # ---------------------------------------------------------------------------
 problem = {
-    "num_vars": 5,
-    "names": ["Lambda", "Da", "theta", "C_thresh_ads", "C_thresh_des"],
+    "num_vars": 6,
+    "names": ["Lambda", "Da", "theta", "C_thresh_ads", "C_thresh_des", "epsilon"],
     "bounds": [
         [0.01,  10.0],    # Lambda  — sorbent/fluid capacity ratio
         [0.005, 10.0],    # Da      — Damkoehler number
         [0.1,   10.0],    # theta   — isotherm steepness
         [0.01,   0.5],    # C_thresh_ads — adsorption outlet cutoff
-        [0.01,   0.5],    # C_thresh_des — desorption eluate cutoff
+        [0.05,   0.5],    # C_thresh_des — desorption eluate cutoff
+        [0.35,   0.5],    # epsilon — bed porosity
     ],
-    "dists": ["unif", "unif", "unif", "unif", "unif"],
+    "dists": ["unif", "unif", "unif", "unif", "unif", "unif"],
 }
 
 pretty_names = [
     r"$\Lambda$", r"$Da$", r"$\Theta$",
-    r"$C^*_{th,ads}$", r"$C^*_{th,des}$",
+    r"$C^*_{th,ads}$", r"$C^*_{th,des}$", r"$\varepsilon$",
 ]
 
 ETA_P = 1      # pump efficiency
-EPSILON = 0.35   # bed porosity
 PSI = 1.0        # viscosity ratio (same fluid)
 
 
@@ -82,12 +82,13 @@ def build_sobol_df(Si, names):
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    jax.config.update('jax_default_device', jax.devices('cpu')[0])
     JPS.apply()
     jax.config.update("jax_platform_name", "cpu")
     print(jax.devices())
     print("Generating Sobol samples …")
 
-    N = 2 ** 12
+    N = 2 ** 14
     param_values = saltelli.sample(problem, N, calc_second_order=False)
     n_evals = param_values.shape[0]
     print(f"Total evaluations: {n_evals}")
@@ -96,17 +97,16 @@ if __name__ == "__main__":
     tau_ads      = np.zeros(n_evals)
     tau_des      = np.zeros(n_evals)
     U_b          = np.zeros(n_evals)
-    eta_li       = np.zeros(n_evals)
     R_outlet_des        = np.zeros(n_evals)
     sec_star     = np.zeros(n_evals)
     productivity = np.zeros(n_evals)
 
     with tqdm.tqdm(total=n_evals, desc="Evaluating", unit="eval") as pbar:
-        for i, (Lambda, Da, theta, c_th_ads, c_th_des) in enumerate(param_values):
+        for i, (Lambda, Da, theta, c_th_ads, c_th_des, epsilon) in enumerate(param_values):
 
             result = run_cycle(
                 non_dim=NonDimNumbers(
-                    Da=Da, Lambda=Lambda, theta=theta, epsilon=EPSILON,
+                    Da=Da, Lambda=Lambda, theta=theta, epsilon=epsilon,
                 ),
                 c_thresh_ads=jnp.asarray(c_th_ads),
                 c_thresh_des=jnp.asarray(c_th_des),
@@ -117,15 +117,15 @@ if __name__ == "__main__":
             tau_ads[i]      = result[0]
             tau_des[i]      = result[1]
             U_b[i]          = result[2]
-            eta_li[i]       = result[3]
-            R_outlet_des[i]        = result[4][0]
-            sec_star[i]     = result[5][0]
-            productivity[i] = result[6][0]
+            R_outlet_des[i]        = result[3]
+            sec_star[i]     = result[4]
+            productivity[i] = result[5]
 
             pbar.set_postfix({
                 "Λ": f"{Lambda:.2g}",
                 "Da": f"{Da:.2g}",
                 "θ": f"{theta:.2g}",
+                "ε": f"{epsilon:.2f}",
                 "c_ads": f"{c_th_ads:.2f}",
                 "c_des": f"{c_th_des:.2f}",
                 "SEC*": f"{sec_star[i]:.3g}",
@@ -137,7 +137,6 @@ if __name__ == "__main__":
         "tau_ads":  ("Sobol — Adsorption time",         tau_ads),
         "tau_des":  ("Sobol — Desorption time",          tau_des),
         "U_b":      ("Sobol — Bed utilisation",           U_b),
-        "eta_li":   ("Sobol — Li removal efficiency",     eta_li),
         "R_outlet_des":    ("Sobol — Li recovered (desorption)", R_outlet_des),
         "sec_star":     ("Sobol — SEC*",                      sec_star),
         "productivity": ("Sobol — Productivity (R_outlet_des/τ_cycle)", productivity),
@@ -165,10 +164,10 @@ if __name__ == "__main__":
         "theta":        param_values[:, 2],
         "C_thresh_ads": param_values[:, 3],
         "C_thresh_des": param_values[:, 4],
+        "epsilon":      param_values[:, 5],
         "tau_ads":      tau_ads,
         "tau_des":      tau_des,
         "U_b":          U_b,
-        "eta_li":       eta_li,
         "R_outlet_des":        R_outlet_des,
         "sec_star":     sec_star,
         "productivity": productivity,

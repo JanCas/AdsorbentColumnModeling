@@ -111,14 +111,10 @@ def column_ode(t, state: ColumnState, args: ColumnArgs):
     advection = (1.0 / args.epsilon) * (C.vals - C_prev) / C.δx
     dC_dt = -advection - args.Lambda * dn_dt
     
-    jax.debug.print("Hello1")
-    R_outlet = C.vals[-1]
-    jax.debug.print("Hello2")
-
     return ColumnState(
         C_star=_spatial_tangent(C, dC_dt),
         n_star=_spatial_tangent(n, dn_dt),
-        R_outlet=C.vals[-1],           # dR_outlet/dτ = C*(ζ=1, τ)
+        R_outlet=jnp.asarray(C.vals[-1]),           # dR_outlet/dτ = C*(ζ=1, τ)
     )
 
 
@@ -154,11 +150,11 @@ _CONTROLLER = diffrax.PIDController(
 )
 
 
-def _empty_state():
+def ads_state(c_threshold_des):
     return ColumnState(
         C_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: 0.0),
-        n_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: 0.0),
-        R_outlet=jnp.array(0.0),
+        n_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: c_threshold_des),
+        R_outlet=jnp.array(0.0)
     )
 
 
@@ -171,7 +167,7 @@ def _empty_state():
 #   Dimensional recovery:  SEC = SEC* · μ u_s N / (c₀ d_p)
 # ---------------------------------------------------------------------------
 def compute_sec_star(epsilon, eta_p, tau_ads, tau_des, R_des, Psi=1.0):
-    hydraulic = 150.0 * (1.0 - epsilon) ** 2 / (epsilon ** 3)
+    hydraulic = 150.0 * (1.0 - epsilon) ** 2 / (epsilon ** 2)
     return hydraulic * (tau_ads + Psi * tau_des) / (eta_p * R_des)
 
 
@@ -215,7 +211,6 @@ def run_cycle(
     productivity - R_outlet_des / (tau_ads + tau_des), Li recovered per unit cycle time
     """
     zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)
-
     # ---- Phase 1: Adsorption ------------------------------------------------
     ads_args = ColumnArgs.from_non_dim(non_dim, c_inlet=1.0)
     ads_sol = diffrax.diffeqsolve(
@@ -224,28 +219,27 @@ def run_cycle(
         t0=0.0,
         t1=jnp.inf,
         dt0=_DT0,
-        y0=_empty_state(),
+        y0=ads_state(c_thresh_des),
         saveat=diffrax.SaveAt(t1=True),
         stepsize_controller=_CONTROLLER,
         event=diffrax.Event(make_ads_event(c_thresh_ads)),
         args=ads_args,
         max_steps=_MAX_STEPS,
     )
-
     ads_final = ads_sol.ys
     tau_ads = ads_sol.ts[0]
 
 
     # Bed utilisation
     U_b = jnp.trapezoid(ads_final.n_star.vals, zeta)[0]
-
     # ---- Phase 2: Desorption ------------------------------------------------
     des_args = ColumnArgs.from_non_dim(non_dim, c_inlet=0.0)
     des_y0 = ColumnState(
-        C_star=ads_final.C_star,
-        n_star=ads_final.n_star,
+        C_star=SpatialDiscretisation(ads_final.C_star.δx, ads_final.C_star.vals[-1]),
+        n_star=SpatialDiscretisation(ads_final.n_star.δx, ads_final.n_star.vals[-1]),
         R_outlet=jnp.array(0.0),       # reset accumulator for desorption
     )
+
     des_sol = diffrax.diffeqsolve(
         diffrax.ODETerm(column_ode),
         _SOLVER,
@@ -259,7 +253,6 @@ def run_cycle(
         args=des_args,
         max_steps=_MAX_STEPS,
     )
-
     des_final = des_sol.ys
     tau_des = des_sol.ts[0]
 
@@ -275,46 +268,3 @@ def run_cycle(
 
     return tau_ads, tau_des, U_b, R_outlet_des, sec_star, productivity
 
-
-# ---------------------------------------------------------------------------
-# Convenience: adsorption-only wrapper (backward compatible)
-# ---------------------------------------------------------------------------
-@eqx.filter_jit
-def run_adsorption_only(non_dim: NonDimNumbers, c_thresh: float = 0.05, eta_p: float = 0.7):
-    """Single-phase adsorption.  Returns (tau_break, U_b, eta_li, sec_star)."""
-    c_thresh = jnp.asarray(c_thresh)
-    eta_p = jnp.asarray(eta_p)
-
-    zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)
-
-    args = ColumnArgs.from_non_dim(non_dim, c_inlet=1.0)
-    sol = diffrax.diffeqsolve(
-        diffrax.ODETerm(column_ode),
-        _SOLVER,
-        t0=0.0,
-        t1=jnp.inf,
-        dt0=_DT0,
-        y0=_empty_state(),
-        saveat=diffrax.SaveAt(t1=True),
-        stepsize_controller=_CONTROLLER,
-        event=diffrax.Event(make_ads_event(c_thresh)),
-        args=args,
-        max_steps=_MAX_STEPS,
-    )
-
-    final = sol.ys
-    tau_break = sol.ts[0]
-
-    R_ads = non_dim.epsilon * (
-        jnp.trapezoid(final.C_star.vals, zeta)
-        + non_dim.Lambda * jnp.trapezoid(final.n_star.vals, zeta)
-    )
-    eta_li = R_ads / tau_break
-
-    U_b = jnp.trapezoid(final.n_star.vals, zeta)
-
-    sec_star = 150.0 * (1.0 - non_dim.epsilon) ** 2 / (
-        non_dim.epsilon ** 3 * eta_p * eta_li
-    )
-
-    return tau_break, U_b, eta_li, sec_star
