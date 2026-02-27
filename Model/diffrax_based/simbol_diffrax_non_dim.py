@@ -1,6 +1,6 @@
 import JansPlottingStuff as JPS
 import jax.numpy as jnp
-from SALib.sample import saltelli
+from SALib.sample import sobol as sp
 from SALib.analyze import sobol
 import numpy as np
 import pandas as pd
@@ -21,9 +21,9 @@ problem = {
     "bounds": [
         [0.01,  10.0],    # Lambda  — sorbent/fluid capacity ratio
         [0.005, 10.0],    # Da      — Damkoehler number
-        [0.1,   10.0],    # theta   — isotherm steepness
-        [0.01,   0.5],    # C_thresh_ads — adsorption outlet cutoff
-        [0.05,   0.5],    # C_thresh_des — desorption eluate cutoff
+        [0.5,   10.0],    # theta   — isotherm steepness
+        [0.10,    0.8],    # C_thresh_ads — adsorption outlet cutoff
+        [0.05,  0.18],    # C_thresh_des — desorption eluate cutoff
         [0.35,   0.5],    # epsilon — bed porosity
     ],
     "dists": ["unif", "unif", "unif", "unif", "unif", "unif"],
@@ -88,8 +88,8 @@ if __name__ == "__main__":
     print(jax.devices())
     print("Generating Sobol samples …")
 
-    N = 2 ** 14
-    param_values = saltelli.sample(problem, N, calc_second_order=False)
+    N = 2 ** 11
+    param_values = sp.sample(problem, N, calc_second_order=False)
     n_evals = param_values.shape[0]
     print(f"Total evaluations: {n_evals}")
 

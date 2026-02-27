@@ -104,7 +104,6 @@ def column_ode(t, state: ColumnState, args: ColumnArgs):
 
     n_eq = langmuir_isotherm_non_dim(C.vals, args.theta)
 
-    # Standard LDF — signed, so desorption works naturally
     dn_dt = args.Da * (n_eq - n.vals)
 
     C_prev = jnp.roll(C.vals, 1).at[0].set(args.c_inlet)
@@ -167,8 +166,8 @@ def ads_state(c_threshold_des):
 #   Dimensional recovery:  SEC = SEC* · μ u_s N / (c₀ d_p)
 # ---------------------------------------------------------------------------
 def compute_sec_star(epsilon, eta_p, tau_ads, tau_des, R_des, Psi=1.0):
-    hydraulic = 150.0 * (1.0 - epsilon) ** 2 / (epsilon ** 2)
-    return hydraulic * (tau_ads + Psi * tau_des) / (eta_p * R_des)
+    hydraulic = 150.0 * (1.0 - epsilon) ** 2 / (epsilon ** 3)
+    return hydraulic * (tau_ads + tau_des) / (R_des)
 
 
 # ---------------------------------------------------------------------------
