@@ -1,3 +1,7 @@
+import jax
+jax.config.update("jax_platform_name", "cpu")
+jax.config.update("jax_enable_x64", True)
+
 from pymoo.core.problem import ElementwiseProblem
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.optimize import minimize
@@ -66,7 +70,7 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         bed_util_des = np.mean(n_des) / n_eq
 
         t_cycle = float(t_des)
-        productivity = li_recovered / t_cycle  # mol/(m²·s)
+        productivity = li_recovered / t_cycle / L # mol/(m²·s)
 
         print(f"L: {L:.2f}, u_super: {u_super:.5f}, sec: {sec:.3f}, prod: {productivity:.6f}, t_ads: {float(t_ads):.1f}, t_des: {float(t_des) - float(t_ads):.1f}, bed_util_ads: {bed_util_ads:.3f}, bed_util_des: {bed_util_des:.3f}, des_th: {des_threshold},frac_lost: {float(fraction_lost):.3f}, li_recovered: {li_recovered: .3f}, time: {elapsed}")
         out["F"] = [sec, -productivity]  # Negative because we minimize (want max productivity)

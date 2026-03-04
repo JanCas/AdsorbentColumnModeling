@@ -70,7 +70,7 @@ def contour_heatmap(
     plt.figure(figsize=figsize)
     cf = plt.contourf(Xm, Ym, heat, levels=levels, cmap=cmap)
     cs = plt.contour(Xm, Ym, heat, colors="white", linewidths=1.5, levels=contour_levels)
-    plt.clabel(cs, inline=True, fontsize=8, fmt=contour_fmt)
+    plt.clabel(cs, inline=True, fmt=contour_fmt)
     plt.colorbar(cf, label=z_label or z_col)
     plt.xlabel(x_label or x_col)
     plt.ylabel(y_label or y_col)
