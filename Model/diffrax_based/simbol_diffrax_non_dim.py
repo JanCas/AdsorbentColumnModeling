@@ -1,45 +1,59 @@
-from SALib.sample import saltelli
+import JansPlottingStuff as JPS
+import jax.numpy as jnp
+from SALib.sample import sobol as sp
 from SALib.analyze import sobol
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import tqdm
-from diffrax_non_dim import run_wrapper, NonDimNumbers
+from diffrax_non_dim import run_cycle, NonDimNumbers
 import cmcrameri.cm as cm
 from matplotlib import colormaps
 import jax
 
-colormaps.register(cm.batlow, name="batlow")
-plt.style.use('natcomm_paper.mplstyle')
- 
+
+# ---------------------------------------------------------------------------
+# Sobol problem definition  (5 parameters)
+# ---------------------------------------------------------------------------
 problem = {
-    "num_vars": 3,
-    "names": ["log10_phi_star", "log10_Da2_star", "Lambda_star"],
+    "num_vars": 6,
+    "names": ["Lambda", "Da", "theta", "C_thresh_ads", "C_thresh_des", "epsilon"],
     "bounds": [
-        [.01,  10],   # lambda 
-        [.005,  10],   # Da2* 
-        [.1,  10],   # theta 
+        [0.01,  10.0],    # Lambda  — sorbent/fluid capacity ratio
+        [0.005, 10.0],    # Da      — Damkoehler number
+        [0.5,   10.0],    # theta   — isotherm steepness
+        [0.10,    0.8],    # C_thresh_ads — adsorption outlet cutoff
+        [0.05,  0.18],    # C_thresh_des — desorption eluate cutoff
+        [0.35,   0.5],    # epsilon — bed porosity
     ],
-    "dists": ["unif", "unif", "unif"]
+    "dists": ["unif", "unif", "unif", "unif", "unif", "unif"],
 }
 
-pretty_names = [r"$\Lambda^*$", r"$Da^*$", r"$\Theta^*$"]
+pretty_names = [
+    r"$\Lambda$", r"$Da$", r"$\Theta$",
+    r"$C^*_{th,ads}$", r"$C^*_{th,des}$", r"$\varepsilon$",
+]
 
-def plot_sobol_indices(df, filename="sobol_indices_langmuir_5.png", title="Sobol sensitivity (LDF)"):
+ETA_P = 1      # pump efficiency
+PSI = 1.0        # viscosity ratio (same fluid)
+
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+def plot_sobol_indices(df, filename="sobol_indices.png", title="Sobol sensitivity"):
     x = np.arange(len(df))
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
 
-    # First-order
     axes[0].bar(x, df["S1"], yerr=df["S1_conf"], width=0.6, capsize=4)
     axes[0].set_xticks(x)
-    axes[0].set_xticklabels(df["param"])
+    axes[0].set_xticklabels(df["param"], fontsize=9)
     axes[0].set_ylabel("S1")
     axes[0].set_title("First-order")
 
-    # Total-order
     axes[1].bar(x, df["ST"], yerr=df["ST_conf"], width=0.6, capsize=4)
     axes[1].set_xticks(x)
-    axes[1].set_xticklabels(df["param"])
+    axes[1].set_xticklabels(df["param"], fontsize=9)
     axes[1].set_ylabel("ST")
     axes[1].set_title("Total-order")
 
@@ -53,101 +67,110 @@ def plot_sobol_indices(df, filename="sobol_indices_langmuir_5.png", title="Sobol
     fig.savefig(filename.replace(".png", ".svg"))
     plt.close(fig)
 
+
+def build_sobol_df(Si, names):
+    return pd.DataFrame({
+        "param": names,
+        "S1": Si["S1"],
+        "S1_conf": Si["S1_conf"],
+        "ST": Si["ST"],
+        "ST_conf": Si["ST_conf"],
+    })
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    jax.config.update('jax_default_device', jax.devices('cpu')[0])
+    JPS.apply()
     jax.config.update("jax_platform_name", "cpu")
     print(jax.devices())
-    print("Generating Sobol Samples...")
-    
-    N=2048 # base sample size
-    param_values = saltelli.sample(problem, N, calc_second_order=False)
-    print(f"Total number of evaluations: {param_values.shape[0]}")
+    print("Generating Sobol samples …")
 
-    tau = np.zeros(param_values.shape[0])
-    bed_util = np.zeros(param_values.shape[0])
+    N = 2 ** 11
+    param_values = sp.sample(problem, N, calc_second_order=False)
+    n_evals = param_values.shape[0]
+    print(f"Total evaluations: {n_evals}")
 
-    with tqdm.tqdm(total=len(tau), desc="Evaluating Model", unit="eval") as pbar:
-        for i, (Lambda, Da, theta) in enumerate(param_values):
-            
-            tau[i], bed_util[i] = run_wrapper(
-                NonDimNumbers(
-                    Da=Da, Lambda=Lambda, theta=theta, epsilon=.35
-                )
+    # Pre-allocate output arrays
+    tau_ads      = np.zeros(n_evals)
+    tau_des      = np.zeros(n_evals)
+    U_b          = np.zeros(n_evals)
+    R_outlet_des        = np.zeros(n_evals)
+    sec_star     = np.zeros(n_evals)
+    productivity = np.zeros(n_evals)
+
+    with tqdm.tqdm(total=n_evals, desc="Evaluating", unit="eval") as pbar:
+        for i, (Lambda, Da, theta, c_th_ads, c_th_des, epsilon) in enumerate(param_values):
+
+            result = run_cycle(
+                non_dim=NonDimNumbers(
+                    Da=Da, Lambda=Lambda, theta=theta, epsilon=epsilon,
+                ),
+                c_thresh_ads=jnp.asarray(c_th_ads),
+                c_thresh_des=jnp.asarray(c_th_des),
+                eta_p=jnp.asarray(ETA_P),
+                Psi=jnp.asarray(PSI),
             )
 
+            tau_ads[i]      = result[0]
+            tau_des[i]      = result[1]
+            U_b[i]          = result[2]
+            R_outlet_des[i]        = result[3]
+            sec_star[i]     = result[4]
+            productivity[i] = result[5]
+
             pbar.set_postfix({
-                "Lambda": f"{Lambda:.2g}",
+                "Λ": f"{Lambda:.2g}",
                 "Da": f"{Da:.2g}",
-                "theta": f"{theta:.2g}",
-                "U_b": f"{bed_util[i]:.3g}",
-                "tau": f"{tau[i]}"
+                "θ": f"{theta:.2g}",
+                "ε": f"{epsilon:.2f}",
+                "c_ads": f"{c_th_ads:.2f}",
+                "c_des": f"{c_th_des:.2f}",
+                "SEC*": f"{sec_star[i]:.3g}",
             })
             pbar.update(1)
 
+    # ---- Sobol analysis on each output -----------------------------------
+    outputs = {
+        "tau_ads":  ("Sobol — Adsorption time",         tau_ads),
+        "tau_des":  ("Sobol — Desorption time",          tau_des),
+        "U_b":      ("Sobol — Bed utilisation",           U_b),
+        "R_outlet_des":    ("Sobol — Li recovered (desorption)", R_outlet_des),
+        "sec_star":     ("Sobol — SEC*",                      sec_star),
+        "productivity": ("Sobol — Productivity (R_outlet_des/τ_cycle)", productivity),
+    }
 
-    print("Performing Sobol analysis for breakthrough time...")
-    Si_breakthrough = sobol.analyze(
-        problem,
-        tau,
-        calc_second_order=False,
-        print_to_console=True,
-    )
+    for key, (title, values) in outputs.items():
+        # Skip if all values are identical (no variance to analyse)
+        if np.ptp(values) < 1e-15:
+            print(f"\nSkipping {key}: no variance.")
+            continue
 
-    S1 = Si_breakthrough["S1"]
-    ST = Si_breakthrough["ST"]
-    S1_conf = Si_breakthrough["S1_conf"]
-    ST_conf = Si_breakthrough["ST_conf"]
+        print(f"\nSobol analysis: {key}")
+        Si = sobol.analyze(
+            problem, values, calc_second_order=False, print_to_console=True,
+        )
+        df = build_sobol_df(Si, pretty_names)
+        df.to_csv(f"sobol_{key}.csv", index=False)
+        plot_sobol_indices(df, filename=f"sobol_{key}.png", title=title)
 
-    print("\nPerforming Sobol analysis for bed utilization...")
-    Si_bed_util = sobol.analyze(
-        problem,
-        bed_util,
-        calc_second_order=False,
-        print_to_console=True,
-    )
-
-    S1_bed = Si_bed_util["S1"]
-    ST_bed = Si_bed_util["ST"]
-    S1_conf_bed = Si_bed_util["S1_conf"]
-    ST_conf_bed = Si_bed_util["ST_conf"]
-
-    # Convert back from log10-space for saving
-    Lambda     = param_values[:, 0]
-    Da     = param_values[:, 1]
-    Theta  = param_values[:, 2]
-
-    print("Saving sample data...")
-    df_samples = pd.DataFrame({
-        "Lambda": Lambda,
-        "Da2_star": Da,
-        "Theta": Theta,
-        "tau_star_break": tau,
-        "bed_utilization": bed_util,
-    })
-    df_samples.to_csv("sobol_samples_langmuir_05.csv", index=False)
-
-    print("Saving Sobol indices...")
-    df_sobol_breakthrough = pd.DataFrame({
-        "param": pretty_names,
-        "S1": S1,
-        "S1_conf": S1_conf,
-        "ST": ST,
-        "ST_conf": ST_conf,
-    })
-    df_sobol_breakthrough.to_csv("sobol_indices_breakthrough_langmuir_05.csv", index=False)
-
-    df_sobol_bed_util = pd.DataFrame({
-        "param": pretty_names,
-        "S1": S1_bed,
-        "S1_conf": S1_conf_bed,
-        "ST": ST_bed,
-        "ST_conf": ST_conf_bed,
-    })
-    df_sobol_bed_util.to_csv("sobol_indices_bed_util_langmuir_05.csv", index=False)
-
-    print("Plotting Sobol indices...")
-    plot_sobol_indices(df_sobol_breakthrough, filename="sobol_indices_breakthrough_05.png",
-                       title="Sobol sensitivity - Breakthrough time")
-    plot_sobol_indices(df_sobol_bed_util, filename="sobol_indices_bed_util_05.png",
-                       title="Sobol sensitivity - Bed utilization")
+    # ---- Save raw sample data --------------------------------------------
+    print("\nSaving sample data …")
+    pd.DataFrame({
+        "Lambda":       param_values[:, 0],
+        "Da":           param_values[:, 1],
+        "theta":        param_values[:, 2],
+        "C_thresh_ads": param_values[:, 3],
+        "C_thresh_des": param_values[:, 4],
+        "epsilon":      param_values[:, 5],
+        "tau_ads":      tau_ads,
+        "tau_des":      tau_des,
+        "U_b":          U_b,
+        "R_outlet_des":        R_outlet_des,
+        "sec_star":     sec_star,
+        "productivity": productivity,
+    }).to_csv("sobol_cycle_samples.csv", index=False)
 
     print("\nDone.")

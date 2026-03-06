@@ -362,13 +362,23 @@ class BaseIsothermFit(eqx.Module):
 
 
 class ColumnParameters(eqx.Module):
-    u_inter: float
-    k_s: float
-    epsilon: float
-    C_in: float
-    L: float
-    rho_p: float
+    u_inter: jnp.ndarray
+    k_s: jnp.ndarray
+    epsilon: jnp.ndarray
+    C_in: jnp.ndarray
+    L: jnp.ndarray
+    rho_p: jnp.ndarray
     isotherm: BaseIsothermFit
+
+    def __post_init__(self):
+        # Keep numeric leaves as JAX arrays so JIT can reuse one compiled executable
+        # across different parameter values instead of recompiling per Python float.
+        object.__setattr__(self, "u_inter", jnp.asarray(self.u_inter))
+        object.__setattr__(self, "k_s", jnp.asarray(self.k_s))
+        object.__setattr__(self, "epsilon", jnp.asarray(self.epsilon))
+        object.__setattr__(self, "C_in", jnp.asarray(self.C_in))
+        object.__setattr__(self, "L", jnp.asarray(self.L))
+        object.__setattr__(self, "rho_p", jnp.asarray(self.rho_p))
 
     def replace(self, **kwargs) -> "ColumnParameters":
         """Return a new instance with updated values."""

@@ -6,17 +6,15 @@ import jax.lax as lax
 from jaxtyping import Array, Float
 import sys
 from pathlib import Path
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from utils.Dataclasses import ColumnParameters, Study, BreakthroughCurve
 
 from collections.abc import Callable
 
-# Represents the interval [x0, x_final] discretised into n equally-spaced points.
+# Represents values on a uniform spatial grid with fixed spacing δx.
 class SpatialDiscretisation(eqx.Module):
-    x0: float = eqx.field(static=True)
-    x_final: float = eqx.field(static=True)
+    δx: Float[Array, ""]
     vals: Float[Array, "n"]
 
     @classmethod
@@ -24,18 +22,12 @@ class SpatialDiscretisation(eqx.Module):
         if n < 2:
             raise ValueError("Must discretise [x0, x_final] into at least two points")
         vals = jax.vmap(fn)(jnp.linspace(x0, x_final, n))
-        return cls(x0, x_final, vals)
-
-    @property
-    def δx(self):
-        return (self.x_final - self.x0) / (len(self.vals) - 1)
+        δx = jnp.asarray((x_final - x0) / (n - 1), dtype=vals.dtype)
+        return cls(δx, vals)
 
     def binop(self, other, fn):
-        if isinstance(other, SpatialDiscretisation):
-            if self.x0 != other.x0 or self.x_final != other.x_final:
-                raise ValueError("Mismatched spatial discretisations")
-            other = other.vals
-        return SpatialDiscretisation(self.x0, self.x_final, fn(self.vals, other))
+        other_vals = other.vals if isinstance(other, SpatialDiscretisation) else other
+        return SpatialDiscretisation(self.δx, fn(self.vals, other_vals))
 
     def __add__(self, other):
         return self.binop(other, lambda x, y: x + y)
@@ -60,14 +52,17 @@ class ColumnState(eqx.Module):
     n: SpatialDiscretisation
     cumulative_out: Float[Array, ""] = 0.0  # Integrated outlet flux over time
 
-# @jax.jit(static_argnums=2)
+
+def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]) -> SpatialDiscretisation:
+    """Return ODE tangent with fixed grid spacing (dδx/dt = 0)."""
+    return SpatialDiscretisation(jnp.zeros_like(sd.δx), dvals_dt)
+
 def column_ode(t, state: ColumnState, args: ColumnParameters):
     # jax.debug.print("args={a.C_in}", a=args)
     C = state.C
     n = state.n
 
-    n_star = args.isotherm(C.vals)
-    # jax.debug.print("n_star={n}", n=n_star)
+    n_star = jax.vmap(args.isotherm)(C.vals)
     dn_dt = args.k_s * (n_star - n.vals) * jnp.abs(n_star - n.vals)
 
     C_prev = jnp.roll(C.vals, shift=1)
@@ -84,8 +79,8 @@ def column_ode(t, state: ColumnState, args: ColumnParameters):
     d_cumulative_out_dt = C_out * args.u_inter * args.epsilon
 
     return ColumnState(
-        C=SpatialDiscretisation(C.x0, C.x_final, dC_dt),
-        n=SpatialDiscretisation(n.x0, n.x_final, dn_dt),
+        C=_spatial_tangent(C, dC_dt),
+        n=_spatial_tangent(n, dn_dt),
         cumulative_out=d_cumulative_out_dt
     )
 
@@ -103,6 +98,7 @@ def make_desorption_event(potential_adsorbed, threshold=0.02):
     def desorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
         total_adsorbed = jnp.sum(y.n.vals)
         ratio = total_adsorbed / potential_adsorbed
+        
         return ratio < threshold
     return desorption_finish_event
 
@@ -119,25 +115,22 @@ def make_adsorption_loss_event(loss_fraction):
     def adsorption_loss_event(t, y, params: ColumnParameters, **kwargs):
         cumulative_in = params.C_in * params.u_inter * params.epsilon * t
         fraction_lost = jnp.where(cumulative_in > 0, y.cumulative_out / cumulative_in, 0.0)
+        # jax.debug.print("{t}, {cumulative_in}, {fraction_lost}", t=t, cumulative_in=cumulative_in, fraction_lost=fraction_lost)
         return fraction_lost > loss_fraction
 
     return adsorption_loss_event
 
 
 def get_finish_state(solution):
-    t = np.array(solution.ts)
-    t = t[np.isfinite(t)]
+    valid = jnp.isfinite(solution.ts)
+    idx = jnp.sum(valid)-1
 
-    C = np.array(solution.ys.C.vals)
-    C = C[np.isfinite(C).all(axis=1)]
-
-    n = np.array(solution.ys.n.vals)
-    n = n[np.isfinite(n).all(axis=1)]
-
-    cumulative_out = np.array(solution.ys.cumulative_out)
-    cumulative_out = cumulative_out[np.isfinite(cumulative_out)]
-
-    return t, C, n, cumulative_out
+    return (
+        solution.ts[idx],
+        solution.ys.C.vals[idx],
+        solution.ys.n.vals[idx],
+        solution.ys.cumulative_out[idx]
+    )
 
 def set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params: ColumnParameters) -> ColumnState:
     """Create initial adsorption state with residual loading from previous desorption cycle.
@@ -152,23 +145,18 @@ def set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_pa
         cumulative_out=jnp.array(0.0)
     )
 
-
-def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) ->  float:
-    """
-    Runs the diffrax model for the column sorption and returns the SEC
-
-    :param column_params: Column parameters
-    :type column_params: ColumnParameters
-    :param loss_fraction: Fraction of incoming material lost before stopping adsorption (default 5%)
-    :type loss_fraction: float
-    :return: SEC
-    :rtype: float
-    """
+@eqx.filter_jit
+def _run_model_jit(
+    column_params: ColumnParameters,
+    loss_fraction: Float[Array, ""],
+    desorption_threshold: Float[Array, ""],
+) -> float:
+    """JIT-friendly model implementation with array-valued runtime inputs."""
 
     #Spatial discretization
     x0 = 0
     x_final = column_params.L
-    n = 5
+    n = 200
     y0_ads = set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params)
 
     #Temporal discretization
@@ -179,16 +167,16 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
     saveat_des = diffrax.SaveAt(t0=True, t1=True)  # Initial + final for li_recovered
 
     #Tolerances
-    rtol=1e-6
+    rtol=1e-4
     atol=1e-6
-    # stepsize_controller = diffrax.PIDController()
-    stepsize_controller = diffrax.ConstantStepSize()
+    stepsize_controller = diffrax.PIDController(rtol=rtol, atol=atol)
+    # stepsize_controller = diffrax.ConstantStepSize()
 
     ads_event = diffrax.Event(make_adsorption_loss_event(loss_fraction))
 
     solution_ads = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
-        solver=diffrax.Euler(),
+        solver=diffrax.Tsit5(),
         t0=t0,
         t1=t_final,
         dt0=dt,
@@ -197,19 +185,22 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
         saveat=saveat_ads,
         stepsize_controller=stepsize_controller,
         event=ads_event,
-        max_steps=int(1e6),
+        max_steps=2**15,
+        throw=False
     )
+    t_ads_final, C_ads_final, n_ads_final, cumulative_out_ads_final = get_finish_state(solution_ads)
 
-    t_ads, C_ads, n_ads, cumulative_out_ads = get_finish_state(solution_ads)
+    ads_ok = diffrax.is_okay(solution_ads.result)
+
     y0_des = ColumnState(
-        C=SpatialDiscretisation(x0, x_final, C_ads[-1, :]),
-        n=SpatialDiscretisation(x0, x_final, n_ads[-1, :]),
+        C=SpatialDiscretisation(y0_ads.C.δx, C_ads_final),
+        n=SpatialDiscretisation(y0_ads.n.δx, n_ads_final),
         cumulative_out=jnp.array(0.0)  # Reset for desorption phase
     )
 
     # Compute adsorption finishing condition before modifying column_params
-    cumulative_in = column_params.C_in * column_params.u_inter * column_params.epsilon * t_ads[-1]
-    fraction_lost = cumulative_out_ads[-1] / cumulative_in if cumulative_in > 0 else 0.0
+    cumulative_in = column_params.C_in * column_params.u_inter * column_params.epsilon * t_ads_final
+    fraction_lost = jnp.where(cumulative_in > 0, cumulative_out_ads_final / cumulative_in,0)
 
     # Calculate potential loading before modifying column_params
     potential_adsorbed = column_params.isotherm(column_params.C_in) * n
@@ -219,8 +210,8 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
 
     solution_des = diffrax.diffeqsolve(
         terms=diffrax.ODETerm(column_ode),
-        solver=diffrax.Euler(),
-        t0 = t_ads[-1],
+        solver=diffrax.Tsit5(),
+        t0 = t_ads_final,
         t1=t_final,
         dt0=dt,
         y0=y0_des,
@@ -228,15 +219,25 @@ def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, deso
         saveat=saveat_des,
         stepsize_controller=stepsize_controller,
         event=des_event,
-        max_steps = int(1e6)
+        max_steps = 2**15,
+        throw=False
     )
 
-    t_des, C_des, n_des, _ = get_finish_state(solution=solution_des)
+    t_des_final, C_des_final, n_des_final, cumulative_out_des_final = get_finish_state(solution=solution_des)
 
-    # Clear diffrax compilation cache to prevent memory growth
-    diffrax.diffeqsolve._cached.clear_cache()
+    des_ok = diffrax.is_okay(solution_des.result)
+    solver_ok = ads_ok & des_ok
 
-    return (t_ads, C_ads, n_ads), (t_des, C_des, n_des), fraction_lost
+    return (t_ads_final, C_ads_final, n_ads_final), (t_des_final, C_des_final, n_des_final, cumulative_out_des_final), fraction_lost, solver_ok
+
+
+def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) -> float:
+    """Run the column model while keeping frequently changed scalars as dynamic JAX inputs."""
+    return _run_model_jit(
+        column_params,
+        jnp.asarray(loss_fraction),
+        jnp.asarray(desorption_threshold),
+    )
 
 '''
 def plot_breakthrough(t, C, column_params: ColumnParameters, curve: BreakthroughCurve = None):
@@ -306,11 +307,11 @@ if __name__ == "__main__":
     print(u_super)
     params = study.to_column_parameter(column_length, 50, u_super)
 
-    (t_ads, C_ads, n_ads), (t_des, C_des, n_des) = run_model(params)
+    (t_ads, C_ads, n_ads), (t_des_final, C_des_final, n_des_final) = run_model(params)
 
     params = params.replace(C_in=50)
 
     plot_breakthrough(t_ads, C_ads, params, exp_curve)
-    plot_desorption(t_des, C_des, n_des)
+    plot_desorption(t_des_final, C_des_final, n_des_final)
 
 '''
