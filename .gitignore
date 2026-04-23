@@ -6,4 +6,4 @@ utils/__pycache__/*.pyc
 *.gif
 utils/__pycache__/Dataclasses.cpython-313.pyc
 conversation_cumulative_out_event.md
-Model/diffrax_based/__pycache__/diffrax_column_model.cpython-314.pyc
+Model/AlLDH/__pycache__/diffrax_column_model.cpython-314.pyc

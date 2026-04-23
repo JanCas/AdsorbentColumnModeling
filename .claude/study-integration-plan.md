@@ -308,7 +308,7 @@ q_star = jax.vmap(args.isotherm)(C.vals)
 1. Test import works:
    ```python
    from utils.Dataclasses import Study, ColumnParameters
-   from Model.diffrax_based.diffrax_column_model import run_wrapper
+   from Model.AlLDH.diffrax_column_model import run_wrapper
    ```
 
 2. Load study and create parameters:
