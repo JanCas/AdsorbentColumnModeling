@@ -1,16 +1,22 @@
+import logging
+import sys
+from collections.abc import Callable
+from pathlib import Path
+
 import diffrax
 import equinox as eqx
 import jax
-import jax.numpy as jnp
 import jax.lax as lax
+import jax.numpy as jnp
 from jaxtyping import Array, Float
-import sys
-from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from utils.Dataclasses import ColumnParameters, Study, BreakthroughCurve
 
-from collections.abc import Callable
+_log = logging.getLogger(__name__)
+# `_run_model_jit` below is @eqx.filter_jit; never log inside its body or
+# inside the helpers it calls under trace (column_ode, make_*_event,
+# set_initial_adsorption_state, get_finish_state). Log in `run_model` only.
 
 # Represents values on a uniform spatial grid with fixed spacing δx.
 class SpatialDiscretisation(eqx.Module):
@@ -156,7 +162,7 @@ def _run_model_jit(
     #Spatial discretization
     x0 = 0
     x_final = column_params.L
-    n = 200
+    n = 100
     y0_ads = set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params)
 
     #Temporal discretization
@@ -233,11 +239,31 @@ def _run_model_jit(
 
 def run_model(column_params: ColumnParameters, loss_fraction: float = 0.05, desorption_threshold: float = .02) -> float:
     """Run the column model while keeping frequently changed scalars as dynamic JAX inputs."""
-    return _run_model_jit(
+    _log.debug(
+        "run_model: u_inter=%.3e k_s=%.3e eps=%.3f C_in=%.3g L=%.4f rho_p=%.1f "
+        "loss_fraction=%.3f desorption_threshold=%.3f",
+        float(column_params.u_inter), float(column_params.k_s),
+        float(column_params.epsilon), float(column_params.C_in),
+        float(column_params.L), float(column_params.rho_p),
+        float(loss_fraction), float(desorption_threshold),
+    )
+    result = _run_model_jit(
         column_params,
         jnp.asarray(loss_fraction),
         jnp.asarray(desorption_threshold),
     )
+    (t_ads, _, _), (t_des, _, _, _), fraction_lost, solver_ok = result
+    if not bool(solver_ok):
+        _log.warning(
+            "run_model: solver_ok=False (t_ads=%.3g, t_des=%.3g, fraction_lost=%.3g)",
+            float(t_ads), float(t_des), float(fraction_lost),
+        )
+    else:
+        _log.debug(
+            "run_model done: t_ads=%.3g, t_des=%.3g, fraction_lost=%.3g",
+            float(t_ads), float(t_des), float(fraction_lost),
+        )
+    return result
 
 '''
 def plot_breakthrough(t, C, column_params: ColumnParameters, curve: BreakthroughCurve = None):

@@ -1,44 +1,15 @@
+import logging
+
 import diffrax
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
-from collections.abc import Callable
+
+_log = logging.getLogger(__name__)
+# `run_cycle` below is @eqx.filter_jit; do NOT put _log calls inside its body.
+# Callers (multi_optim.py, Sensitivity/sobol_driver.py) handle runtime logging.
 
 N_SPATIAL = 20  # number of spatial grid points
-
-
-# ---------------------------------------------------------------------------
-# Spatial discretisation (unchanged)
-# ---------------------------------------------------------------------------
-class SpatialDiscretisation(eqx.Module):
-    δx: Float[Array, ""]
-    vals: Float[Array, "n"]
-
-    @classmethod
-    def discretise_fn(cls, x0: float, x_final: float, n: int, fn: Callable):
-        if n < 2:
-            raise ValueError("Must discretise [x0, x_final] into at least two points")
-        vals = jax.vmap(fn)(jnp.linspace(x0, x_final, n))
-        δx = jnp.asarray((x_final - x0) / (n - 1), dtype=vals.dtype)
-        return cls(δx, vals)
-
-    def binop(self, other, fn):
-        other_vals = other.vals if isinstance(other, SpatialDiscretisation) else other
-        return SpatialDiscretisation(self.δx, fn(self.vals, other_vals))
-
-    def __add__(self, other):
-        return self.binop(other, lambda x, y: x + y)
-    def __mul__(self, other):
-        return self.binop(other, lambda x, y: x * y)
-    def __radd__(self, other):
-        return self.binop(other, lambda x, y: y + x)
-    def __rmul__(self, other):
-        return self.binop(other, lambda x, y: y * x)
-    def __sub__(self, other):
-        return self.binop(other, lambda x, y: x - y)
-    def __rsub__(self, other):
-        return self.binop(other, lambda x, y: y - x)
 
 
 # ---------------------------------------------------------------------------
@@ -52,13 +23,9 @@ def langmuir_isotherm_non_dim(C_star, theta):
 # Column state
 # ---------------------------------------------------------------------------
 class ColumnState(eqx.Module):
-    C_star: SpatialDiscretisation
-    n_star: SpatialDiscretisation
+    C_star: Float[Array, "n"]
+    n_star: Float[Array, "n"]
     R_outlet: Float[Array, ""]        # ∫ C*(ζ=1) dτ
-
-
-def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]):
-    return SpatialDiscretisation(jnp.zeros_like(sd.δx), dvals_dt)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +45,7 @@ class NonDimNumbers(eqx.Module):
 
 
 # ---------------------------------------------------------------------------
-# ODE args passed to diffrax (includes inlet BC)
+# ODE args passed to diffrax (includes inlet BC and grid spacing)
 # ---------------------------------------------------------------------------
 class ColumnArgs(eqx.Module):
     Da: Float[Array, ""]
@@ -86,12 +53,14 @@ class ColumnArgs(eqx.Module):
     theta: Float[Array, ""]
     epsilon: Float[Array, ""]
     c_inlet: Float[Array, ""]   # 1.0 for adsorption, 0.0 for desorption
+    dzeta: Float[Array, ""]     # spatial grid spacing
 
     @classmethod
     def from_non_dim(cls, nd: NonDimNumbers, c_inlet: float):
         return cls(
             Da=nd.Da, Lambda=nd.Lambda, theta=nd.theta,
             epsilon=nd.epsilon, c_inlet=jnp.asarray(c_inlet),
+            dzeta=jnp.asarray(1.0 / (N_SPATIAL - 1)),
         )
 
 
@@ -102,18 +71,18 @@ def column_ode(t, state: ColumnState, args: ColumnArgs):
     C = state.C_star
     n = state.n_star
 
-    n_eq = langmuir_isotherm_non_dim(C.vals, args.theta)
+    n_eq = langmuir_isotherm_non_dim(C, args.theta)
 
-    dn_dt = args.Da * (n_eq - n.vals)
+    dn_dt = args.Da * (n_eq - n)
 
-    C_prev = jnp.roll(C.vals, 1).at[0].set(args.c_inlet)
-    advection = (1.0 / args.epsilon) * (C.vals - C_prev) / C.δx
+    C_prev = jnp.roll(C, 1).at[0].set(args.c_inlet)
+    advection = (1.0 / args.epsilon) * (C - C_prev) / args.dzeta
     dC_dt = -advection - args.Lambda * dn_dt
-    
+
     return ColumnState(
-        C_star=_spatial_tangent(C, dC_dt),
-        n_star=_spatial_tangent(n, dn_dt),
-        R_outlet=jnp.asarray(C.vals[-1]),           # dR_outlet/dτ = C*(ζ=1, τ)
+        C_star=dC_dt,
+        n_star=dn_dt,
+        R_outlet=jnp.asarray(C[-1]),           # dR_outlet/dτ = C*(ζ=1, τ)
     )
 
 
@@ -123,14 +92,14 @@ def column_ode(t, state: ColumnState, args: ColumnArgs):
 def make_ads_event(c_thresh):
     """Stop adsorption when outlet concentration reaches *c_thresh*."""
     def _event(t, y: ColumnState, args, **kwargs):
-        return y.C_star.vals[-1] >= c_thresh
+        return y.C_star[-1] >= c_thresh
     return _event
 
 
 def make_des_event(c_thresh):
     """Stop desorption when mean bed loading drops below *c_thresh*."""
     def _event(t, y: ColumnState, args, **kwargs):
-        return jnp.mean(y.n_star.vals) <= c_thresh
+        return jnp.mean(y.n_star) <= c_thresh
     return _event
 
 
@@ -151,23 +120,11 @@ _CONTROLLER = diffrax.PIDController(
 
 def ads_state(c_threshold_des):
     return ColumnState(
-        C_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: 0.0),
-        n_star=SpatialDiscretisation.discretise_fn(0.0, 1.0, N_SPATIAL, lambda x: c_threshold_des),
+        C_star=jnp.zeros(N_SPATIAL),
+        n_star=jnp.full(N_SPATIAL, c_threshold_des),
         R_outlet=jnp.array(0.0)
     )
 
-
-
-# ---------------------------------------------------------------------------
-# Nondimensional SEC*
-#
-#   SEC* = 150 (1-ε)² / ε³  ·  (τ_ads + Ψ τ_des) / (η_p R_des)
-#
-#   Dimensional recovery:  SEC = SEC* · μ u_s N / (c₀ d_p)
-# ---------------------------------------------------------------------------
-def compute_sec_star(epsilon, eta_p, tau_ads, tau_des, R_des, Psi=1.0):
-    hydraulic = 150.0 * (1.0 - epsilon) ** 2 / (epsilon ** 3)
-    return hydraulic * (tau_ads + tau_des) / (R_des)
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +135,6 @@ def run_cycle(
     non_dim: NonDimNumbers,
     c_thresh_ads: Float[Array, ""],
     c_thresh_des: Float[Array, ""],
-    eta_p: Float[Array, ""],
-    Psi: Float[Array, ""],
 ):
     """
     Run a full adsorption-desorption cycle and return performance metrics.
@@ -194,19 +149,12 @@ def run_cycle(
         Outlet concentration threshold to end desorption   (0 < . < 1).
         Desorption stops when the elution peak has passed and the outlet
         drops below this value.
-    eta_p : float
-        Pump efficiency.
-    Psi : float
-        Viscosity-velocity ratio  mu_des u_des / (mu_ads u_ads).  Default 1.
-
     Returns
     -------
     tau_ads   - dimensionless adsorption time at cutoff
     tau_des   - dimensionless desorption time at cutoff
     U_b       - bed utilisation at end of adsorption
-    eta_li    - average Li removal efficiency during adsorption
     R_outlet_des - dimensionless Li collected at outlet during desorption ∫C*(ζ=1)dτ
-    sec_star     - nondimensional specific energy consumption
     productivity - R_outlet_des / (tau_ads + tau_des), Li recovered per unit cycle time
     """
     zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)
@@ -230,12 +178,12 @@ def run_cycle(
 
 
     # Bed utilisation
-    U_b = jnp.trapezoid(ads_final.n_star.vals, zeta)[0]
+    U_b = jnp.trapezoid(ads_final.n_star, zeta)[0]
     # ---- Phase 2: Desorption ------------------------------------------------
     des_args = ColumnArgs.from_non_dim(non_dim, c_inlet=0.0)
     des_y0 = ColumnState(
-        C_star=SpatialDiscretisation(ads_final.C_star.δx, ads_final.C_star.vals[-1]),
-        n_star=SpatialDiscretisation(ads_final.n_star.δx, ads_final.n_star.vals[-1]),
+        C_star=ads_final.C_star[-1],
+        n_star=ads_final.n_star[-1],
         R_outlet=jnp.array(0.0),       # reset accumulator for desorption
     )
 
@@ -258,12 +206,8 @@ def run_cycle(
     # Li collected at the outlet during desorption: ∫₀^τ_des C*(ζ=1, τ) dτ
     R_outlet_des = des_final.R_outlet[0]
 
-    # Guard against R_outlet_des ~ 0 (would blow up SEC*)
     R_outlet_des = jnp.maximum(R_outlet_des, 1e-12)
 
-    # ---- Full-cycle metrics ---------------------------------------------------
-    sec_star = compute_sec_star(non_dim.epsilon, eta_p, tau_ads, tau_des, R_outlet_des, Psi)
     productivity = R_outlet_des / (tau_ads + tau_des)
 
-    return tau_ads, tau_des, U_b, R_outlet_des, sec_star, productivity
-
+    return tau_ads, tau_des, U_b, R_outlet_des, productivity
