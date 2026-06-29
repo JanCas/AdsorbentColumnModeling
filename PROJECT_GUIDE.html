@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adsorbent Column Modeling — Project Guide</title>
+
+<!-- MathJax for equation rendering (CDN; if offline, equations show as LaTeX source) -->
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']] },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #1d1d22; --muted: #5d6470; --line: #e2e4ea;
+    --accent: #2b6cb0; --accent2: #b5651d; --ix: #2f855a; --alldh: #6b46c1;
+    --code-bg: #f4f5f8; --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.65; font-size: 16px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 120px; }
+  header.hero {
+    background: linear-gradient(135deg, #1a2740 0%, #2b4a6b 60%, #2f6f8f 100%);
+    color: #fff; padding: 56px 24px 48px; margin-bottom: 8px;
+  }
+  header.hero .inner { max-width: 980px; margin: 0 auto; }
+  header.hero h1 { margin: 0 0 8px; font-size: 2.1rem; font-weight: 700; letter-spacing: -0.02em; }
+  header.hero p { margin: 0; font-size: 1.1rem; opacity: .92; max-width: 70ch; }
+  header.hero .tags { margin-top: 18px; }
+  header.hero .tags span {
+    display: inline-block; background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 999px; padding: 4px 12px; font-size: .82rem; margin-right: 8px; margin-bottom: 6px;
+  }
+  h2 { font-size: 1.55rem; margin: 52px 0 6px; padding-bottom: 8px; border-bottom: 2px solid var(--line); letter-spacing: -0.01em; }
+  h3 { font-size: 1.2rem; margin: 32px 0 4px; }
+  h4 { font-size: 1.02rem; margin: 22px 0 2px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
+  p { margin: 10px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-size: .9em; }
+  p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; }
+  pre {
+    background: #1e2230; color: #e6e9f0; padding: 16px 18px; border-radius: 10px;
+    overflow-x: auto; font-size: .85rem; line-height: 1.5;
+  }
+  pre .c { color: #7f8aa3; } pre .k { color: #7fb4e3; } pre .s { color: #9ece6a; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--line); padding: 8px 11px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  tr:nth-child(even) td { background: #fafbfd; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px 22px 18px; margin: 18px 0; box-shadow: 0 1px 3px rgba(20,30,50,.04); }
+  .note { border-left: 4px solid var(--accent); background: #eef5fc; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .note.warn { border-color: var(--accent2); background: #fdf3e9; }
+  .note.tip { border-color: var(--ix); background: #ecf7f0; }
+  .pill { display:inline-block; font-size:.72rem; font-weight:700; padding:2px 9px; border-radius:999px; color:#fff; vertical-align:middle; }
+  .pill.ix { background: var(--ix); } .pill.alldh { background: var(--alldh); }
+  .pill.dim { background:#718096; } .pill.nd { background:#2b6cb0; }
+  figure { margin: 22px 0; text-align: center; }
+  figure svg { max-width: 100%; height: auto; }
+  figcaption { color: var(--muted); font-size: .86rem; margin-top: 8px; }
+  .toc { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 24px; columns: 2; column-gap: 36px; }
+  .toc a { display: block; padding: 3px 0; font-size: .94rem; }
+  .toc .sub { padding-left: 16px; font-size: .88rem; color: var(--muted); }
+  @media (max-width: 680px) { .toc { columns: 1; } header.hero h1 { font-size: 1.6rem; } }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 680px) { .two-col { grid-template-columns: 1fr; } }
+  .kbd { background:#eef1f6; border:1px solid #d2d7e0; border-bottom-width:2px; border-radius:5px; padding:1px 6px; font-size:.85em; font-family: monospace; }
+  hr { border: none; border-top: 1px solid var(--line); margin: 40px 0; }
+  .small { font-size: .85rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="inner">
+    <h1>Adsorbent Column Modeling</h1>
+    <p>A guide to the two packed‑bed column models in this repository, and how they are driven through
+       global sensitivity analysis and multi‑objective optimization. Written for a reader who knows
+       transport/reaction physics but has not seen this codebase.</p>
+    <div class="tags">
+      <span>1‑D packed‑bed PDEs</span>
+      <span>JAX + diffrax</span>
+      <span>Sobol sensitivity (SALib)</span>
+      <span>NSGA‑II optimization (pymoo)</span>
+      <span>Application: Li recovery</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2 id="toc" style="border:none;margin-top:30px;">Contents</h2>
+<nav class="toc">
+  <a href="#big-picture">1. The big picture</a>
+  <a href="#system">2. The physical system</a>
+  <a href="#framework">3. The shared modeling framework</a>
+  <a href="#alldh">4. Model A — AlLDH adsorption</a>
+  <a class="sub" href="#alldh-dim">4.1 Dimensional form</a>
+  <a class="sub" href="#alldh-nd">4.2 Non‑dimensional form</a>
+  <a href="#ix">5. Model B — Ion exchange (IX)</a>
+  <a class="sub" href="#ix-dim">5.1 Dimensional form</a>
+  <a class="sub" href="#ix-nd">5.2 Non‑dimensional form</a>
+  <a href="#nondim">6. Why non‑dimensionalize?</a>
+  <a href="#numerics">7. Numerical methods</a>
+  <a href="#sensitivity">8. Sensitivity analysis (Sobol)</a>
+  <a href="#optimization">9. Optimization (NSGA‑II)</a>
+  <a href="#qoi">10. Quantity‑of‑interest glossary</a>
+  <a href="#run">11. How to run it</a>
+  <a href="#map">12. Repository map</a>
+</nav>
+
+<!-- ============================================================= -->
+<h2 id="big-picture">1. The big picture</h2>
+<p>
+  The project models a <strong>packed bed of sorbent particles</strong> through which a feed solution flows.
+  The target species (e.g. lithium) is captured during an <em>adsorption</em> phase and then recovered during
+  a <em>desorption</em> (elution) phase. Two physically distinct capture mechanisms are modeled:
+</p>
+<ul>
+  <li><span class="pill alldh">AlLDH</span> a lithium/aluminium layered‑double‑hydroxide <strong>adsorbent</strong> with pseudo‑second‑order uptake kinetics and a Langmuir isotherm.</li>
+  <li><span class="pill ix">IX</span> an <strong>ion‑exchange</strong> resin where lithium uptake releases protons, so the model carries explicit acid/base (pH) chemistry.</li>
+</ul>
+<p>
+  Each model exists in two forms: a <span class="pill dim">dimensional</span> version in SI units (used for
+  engineering optimization) and a <span class="pill nd">non‑dimensional</span> version (used for sensitivity
+  analysis, so results are mechanism‑agnostic and comparable across the two models). Everything is written in
+  <strong>JAX</strong> and integrated with the <strong>diffrax</strong> ODE solver, which makes the forward
+  model fast, vectorizable, and differentiable.
+</p>
+
+<figure>
+<svg viewBox="0 0 920 430" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="13">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#4a5568"/>
+    </marker>
+  </defs>
+  <!-- Models -->
+  <rect x="30" y="40" width="200" height="70" rx="10" fill="#f3eefb" stroke="#6b46c1"/>
+  <text x="130" y="68" text-anchor="middle" font-weight="700" fill="#6b46c1">AlLDH model</text>
+  <text x="130" y="88" text-anchor="middle" fill="#5d6470">adsorption, Langmuir + PSO</text>
+
+  <rect x="30" y="150" width="200" height="70" rx="10" fill="#eaf6ef" stroke="#2f855a"/>
+  <text x="130" y="178" text-anchor="middle" font-weight="700" fill="#2f855a">IX model</text>
+  <text x="130" y="198" text-anchor="middle" fill="#5d6470">ion exchange + pH chemistry</text>
+
+  <!-- forms -->
+  <rect x="300" y="20" width="150" height="46" rx="8" fill="#fff" stroke="#718096"/>
+  <text x="375" y="40" text-anchor="middle" fill="#4a5568">dimensional (SI)</text>
+  <text x="375" y="57" text-anchor="middle" font-size="11" fill="#718096">L, u, k, ε …</text>
+
+  <rect x="300" y="194" width="150" height="46" rx="8" fill="#fff" stroke="#2b6cb0"/>
+  <text x="375" y="214" text-anchor="middle" fill="#2b6cb0">non‑dimensional</text>
+  <text x="375" y="231" text-anchor="middle" font-size="11" fill="#718096">Λ, Da, θ, ω …</text>
+
+  <!-- uses -->
+  <rect x="540" y="14" width="180" height="58" rx="10" fill="#fdf3e9" stroke="#b5651d"/>
+  <text x="630" y="38" text-anchor="middle" font-weight="700" fill="#b5651d">Optimization</text>
+  <text x="630" y="57" text-anchor="middle" font-size="11" fill="#5d6470">NSGA‑II → Pareto front</text>
+
+  <rect x="540" y="188" width="180" height="58" rx="10" fill="#eef5fc" stroke="#2b6cb0"/>
+  <text x="630" y="212" text-anchor="middle" font-weight="700" fill="#2b6cb0">Sensitivity</text>
+  <text x="630" y="231" text-anchor="middle" font-size="11" fill="#5d6470">Sobol indices (SALib)</text>
+
+  <!-- outputs -->
+  <rect x="780" y="100" width="110" height="60" rx="10" fill="#f4f5f8" stroke="#4a5568"/>
+  <text x="835" y="126" text-anchor="middle" font-weight="700">Results/</text>
+  <text x="835" y="146" text-anchor="middle" font-size="11" fill="#5d6470">CSV + plots</text>
+
+  <!-- arrows -->
+  <path d="M230,75 L300,55" stroke="#4a5568" fill="none" marker-end="url(#arr)"/>
+  <path d="M230,95 L300,205" stroke="#4a5568" fill="none" marker-end="url(#arr)"/>
+  <path d="M230,185 L300,215" stroke="#4a5568" fill="none" marker-end="url(#arr)"/>
+  <path d="M230,205 L300,60" stroke="#4a5568" fill="none" marker-end="url(#arr)" opacity="0.4"/>
+  <path d="M450,43 L540,43" stroke="#4a5568" fill="none" marker-end="url(#arr)"/>
+  <path d="M450,217 L540,217" stroke="#4a5568" fill="none" marker-end="url(#arr)"/>
+  <path d="M720,43 L800,100" stroke="#4a5568" fill="none" marker-end="url(#arr)"/>
+  <path d="M720,217 L800,160" stroke="#4a5568" fill="none" marker-end="url(#arr)"/>
+
+  <text x="375" y="300" text-anchor="middle" font-size="11" fill="#718096">dimensional form feeds the optimizer; non‑dimensional form feeds the Sobol sweeps</text>
+</svg>
+<figcaption>Figure 1. How the pieces connect: two models × two forms × two analyses.</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2 id="system">2. The physical system</h2>
+<p>
+  Picture a vertical cylindrical column packed with porous sorbent grains. Liquid flows through the void space
+  (porosity \(\varepsilon\)) at interstitial velocity \(u_{int}=u_{super}/\varepsilon\). As solute‑laden feed
+  moves through, solute transfers from liquid onto the solid until the solid saturates. The concentration
+  "front" travels down the bed; when it reaches the outlet (<strong>breakthrough</strong>) the adsorption step
+  is stopped. The flow is then switched to a stripping eluent that pulls the captured species back off the
+  solid and concentrates it in a small eluate volume.
+</p>
+
+<figure>
+<svg viewBox="0 0 860 360" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="13">
+  <defs>
+    <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#2b6cb0"/></marker>
+    <marker id="arr3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#b5651d"/></marker>
+    <pattern id="beads" width="14" height="14" patternUnits="userSpaceOnUse">
+      <circle cx="7" cy="7" r="4" fill="#cbd5e0"/>
+    </pattern>
+  </defs>
+
+  <!-- ADSORPTION column -->
+  <text x="150" y="28" text-anchor="middle" font-weight="700" fill="#2b6cb0">Adsorption (loading)</text>
+  <rect x="110" y="45" width="80" height="240" rx="8" fill="url(#beads)" stroke="#4a5568"/>
+  <!-- saturated zone -->
+  <rect x="110" y="45" width="80" height="120" rx="8" fill="#2b6cb0" opacity="0.25"/>
+  <path d="M150,20 L150,45" stroke="#2b6cb0" stroke-width="2" marker-end="url(#arr2)"/>
+  <text x="150" y="14" text-anchor="middle" fill="#2b6cb0">feed in (C = C_in)</text>
+  <path d="M150,285 L150,315" stroke="#2b6cb0" stroke-width="2" marker-end="url(#arr2)"/>
+  <text x="150" y="335" text-anchor="middle" fill="#5d6470">clean out (until breakthrough)</text>
+  <text x="205" y="105" fill="#2b6cb0" font-size="11">saturated</text>
+  <text x="205" y="220" fill="#5d6470" font-size="11">fresh bed</text>
+  <text x="205" y="165" fill="#4a5568" font-size="11">↑ front moves down</text>
+
+  <!-- DESORPTION column -->
+  <text x="430" y="28" text-anchor="middle" font-weight="700" fill="#b5651d">Desorption (elution)</text>
+  <rect x="390" y="45" width="80" height="240" rx="8" fill="url(#beads)" stroke="#4a5568"/>
+  <rect x="390" y="165" width="80" height="120" rx="8" fill="#b5651d" opacity="0.22"/>
+  <path d="M430,20 L430,45" stroke="#b5651d" stroke-width="2" marker-end="url(#arr3)"/>
+  <text x="430" y="14" text-anchor="middle" fill="#b5651d">eluent in (C = 0 / acid)</text>
+  <path d="M430,285 L430,315" stroke="#b5651d" stroke-width="2" marker-end="url(#arr3)"/>
+  <text x="430" y="335" text-anchor="middle" fill="#5d6470">concentrated product out</text>
+  <text x="485" y="125" fill="#5d6470" font-size="11">stripped</text>
+  <text x="485" y="235" fill="#b5651d" font-size="11">still loaded</text>
+
+  <!-- Breakthrough curve -->
+  <text x="690" y="28" text-anchor="middle" font-weight="700" fill="#4a5568">Outlet signal</text>
+  <line x1="600" y1="285" x2="800" y2="285" stroke="#4a5568"/>
+  <line x1="600" y1="285" x2="600" y2="55" stroke="#4a5568"/>
+  <text x="700" y="335" text-anchor="middle" font-size="11" fill="#5d6470">time</text>
+  <text x="585" y="60" font-size="11" fill="#5d6470" transform="rotate(-90 585,60)" text-anchor="middle"></text>
+  <text x="572" y="170" font-size="11" fill="#5d6470" transform="rotate(-90 572,170)" text-anchor="middle">outlet conc.</text>
+  <!-- breakthrough S-curve -->
+  <path d="M600,285 C660,285 670,90 720,75 C760,65 790,62 800,62" fill="none" stroke="#2b6cb0" stroke-width="2.5"/>
+  <line x1="600" y1="120" x2="800" y2="120" stroke="#2b6cb0" stroke-dasharray="4 3" opacity="0.6"/>
+  <text x="805" y="124" font-size="10" fill="#2b6cb0">C*_th,ads</text>
+  <!-- elution peak -->
+  <path d="M600,285 C640,285 650,90 675,90 C700,90 705,285 800,285" fill="none" stroke="#b5651d" stroke-width="2.5"/>
+  <text x="675" y="82" font-size="10" fill="#b5651d" text-anchor="middle">elution peak</text>
+  <text x="700" y="305" font-size="10" fill="#2b6cb0">load → ⟂ stop</text>
+</svg>
+<figcaption>Figure 2. The adsorption–desorption cycle. Loading stops when the outlet rises to the threshold
+\(C^*_{th,ads}\) (breakthrough); elution stops when the outlet falls back below \(C^*_{th,des}\) after the peak.</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2 id="framework">3. The shared modeling framework</h2>
+<p>
+  Both models share the same skeleton: a <strong>1‑D advection equation</strong> for the mobile (liquid) phase
+  coupled to a <strong>lumped kinetic law</strong> for the stationary (solid) phase, with an
+  <strong>equilibrium isotherm</strong> setting the driving force. Axial dispersion is neglected; transport is
+  pure plug‑flow advection plus mass transfer to the solid.
+</p>
+
+<h4>The three ingredients</h4>
+<table>
+  <tr><th>Ingredient</th><th>Role</th><th>Form used here</th></tr>
+  <tr><td><strong>Advection</strong></td><td>carries solute down the bed</td><td>first‑order <em>upwind</em> (backward) finite difference</td></tr>
+  <tr><td><strong>Isotherm</strong> \(n_{eq}(C)\)</td><td>equilibrium solid loading at a given liquid concentration</td><td>Langmuir (AlLDH &amp; IX); pluggable Temkin/Sips in the dimensional AlLDH</td></tr>
+  <tr><td><strong>LDF kinetics</strong></td><td>rate of approach to equilibrium (<em>linear driving force</em>)</td><td>\(\dot n = k\,(n_{eq}-n)\) — or pseudo‑2nd‑order in the dimensional AlLDH</td></tr>
+</table>
+
+<p>
+  The liquid mass balance says: <em>what accumulates in the fluid = what advects in − what the solid takes up.</em>
+  In dimensional form, per unit bed volume,
+</p>
+$$ \frac{\partial C}{\partial t} \;=\; -\,u_{int}\frac{\partial C}{\partial x}\;-\;\underbrace{\frac{1-\varepsilon}{\varepsilon}\,\rho_p}_{\text{solid/liquid volume}}\frac{\partial n}{\partial t}, \qquad \frac{\partial n}{\partial t}=k\,\big(n_{eq}(C)-n\big). $$
+
+<div class="note tip">
+  <strong>Reading the coupling.</strong> When the solid grabs solute (\(\dot n&gt;0\)), the last term is a
+  <em>sink</em> on the fluid. The dimensionless capacity ratio that emerges from this term, \(\Lambda\), is the
+  single most important group in the whole project — it sets how much solute the bed can hold relative to what
+  the fluid delivers.
+</div>
+
+<h3>Boundary &amp; initial conditions — the common pattern</h3>
+<p>
+  Every variant follows the same scheme, so it is worth stating once. The bed occupies \(x\in[0,L]\)
+  (or \(\zeta\in[0,1]\) non‑dimensional), and a cycle is two phases solved back‑to‑back:
+</p>
+<ul>
+  <li><strong>Inlet (\(x=0\)): one Dirichlet condition</strong>, applied through a <em>ghost cell</em> just
+      upstream of the first node — the concentration entering the bed is fixed to the feed (loading) or to
+      the stripping fluid (desorption).</li>
+  <li><strong>Outlet (\(x=L\)): none imposed.</strong> Because transport is pure advection (no axial
+      dispersion), the upwind scheme just carries material out the end. A "free"/outflow outlet is the correct
+      and complete boundary treatment — adding an outlet condition would over‑specify the problem.</li>
+  <li><strong>Initial condition:</strong> adsorption starts from an essentially empty bed (carrying only a
+      small residual loading left by the previous strip); desorption starts from the <em>fully loaded</em>
+      profile handed over at the end of adsorption, with the inlet switched off.</li>
+</ul>
+
+<figure>
+<!-- ===== Panel 1: ADSORPTION ===== -->
+<svg viewBox="0 0 840 200" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="12.5">
+  <defs>
+    <marker id="arrads" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#2b6cb0"/></marker>
+  </defs>
+  <rect x="10" y="8" width="820" height="184" rx="12" fill="#f6f9fd" stroke="#2b6cb0"/>
+  <text x="28" y="34" font-weight="700" fill="#2b6cb0">① Adsorption — load an (almost) empty bed</text>
+
+  <!-- ghost cell -->
+  <rect x="70" y="78" width="46" height="46" rx="4" fill="#eef5fc" stroke="#2b6cb0" stroke-dasharray="4 3"/>
+  <text x="93" y="106" text-anchor="middle" font-size="11" fill="#2b6cb0">ghost</text>
+  <text x="93" y="64" text-anchor="middle" font-size="11" fill="#2b6cb0">inlet (Dirichlet)</text>
+  <text x="93" y="148" text-anchor="middle" font-weight="700" font-size="11" fill="#2b6cb0">C = C_in   (C* = 1)</text>
+  <!-- interior nodes: light = empty bed -->
+  <g stroke="#4a5568">
+    <rect x="122" y="78" width="46" height="46" rx="4" fill="#dbe9f7"/>
+    <rect x="174" y="78" width="46" height="46" rx="4" fill="#e6f0fa"/>
+    <rect x="226" y="78" width="46" height="46" rx="4" fill="#eef5fc"/>
+    <rect x="278" y="78" width="46" height="46" rx="4" fill="#f4f8fd"/>
+    <rect x="330" y="78" width="46" height="46" rx="4" fill="#f8fbfe"/>
+    <rect x="382" y="78" width="46" height="46" rx="4" fill="#fbfdff"/>
+    <rect x="434" y="78" width="46" height="46" rx="4" fill="#ffffff"/>
+  </g>
+  <text x="300" y="106" text-anchor="middle" font-size="11" fill="#4a5568">interior nodes  i = 0 … N−1   (bed x ∈ [0,L])</text>
+  <text x="300" y="64" text-anchor="middle" font-size="10.5" fill="#718096">IC: bed ≈ empty  (C=0; only residual loading)</text>
+  <line x1="30" y1="101" x2="68" y2="101" stroke="#2b6cb0" stroke-width="2" marker-end="url(#arrads)"/>
+  <line x1="482" y1="101" x2="540" y2="101" stroke="#2b6cb0" stroke-width="2" marker-end="url(#arrads)"/>
+  <text x="600" y="97" text-anchor="middle" font-size="11" fill="#2b6cb0">clean outflow</text>
+  <text x="600" y="113" text-anchor="middle" font-size="10" fill="#5d6470">(no BC needed)</text>
+  <text x="300" y="170" text-anchor="middle" font-size="11" fill="#2b6cb0">⟶ front advances; <tspan font-weight="700">STOP when outlet C* ≥ C*_th,ads</tspan> (breakthrough)</text>
+</svg>
+
+<!-- ===== Panel 2: DESORPTION ===== -->
+<svg viewBox="0 0 840 200" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="12.5" style="margin-top:14px">
+  <defs>
+    <marker id="arrdes" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#b5651d"/></marker>
+  </defs>
+  <rect x="10" y="8" width="820" height="184" rx="12" fill="#fdf8f2" stroke="#b5651d"/>
+  <text x="28" y="34" font-weight="700" fill="#b5651d">② Desorption — strip the loaded bed (starts from ①'s end state)</text>
+
+  <!-- ghost cell -->
+  <rect x="70" y="78" width="46" height="46" rx="4" fill="#fdf3e9" stroke="#b5651d" stroke-dasharray="4 3"/>
+  <text x="93" y="106" text-anchor="middle" font-size="11" fill="#b5651d">ghost</text>
+  <text x="93" y="64" text-anchor="middle" font-size="11" fill="#b5651d">inlet (Dirichlet)</text>
+  <text x="93" y="148" text-anchor="middle" font-weight="700" font-size="11" fill="#b5651d">C = 0   (strip fluid)</text>
+  <!-- interior nodes: filled = loaded bed handed over -->
+  <g stroke="#4a5568">
+    <rect x="122" y="78" width="46" height="46" rx="4" fill="#e8c9a3"/>
+    <rect x="174" y="78" width="46" height="46" rx="4" fill="#e6c49b"/>
+    <rect x="226" y="78" width="46" height="46" rx="4" fill="#e3bf93"/>
+    <rect x="278" y="78" width="46" height="46" rx="4" fill="#e1ba8b"/>
+    <rect x="330" y="78" width="46" height="46" rx="4" fill="#deb583"/>
+    <rect x="382" y="78" width="46" height="46" rx="4" fill="#dcb07b"/>
+    <rect x="434" y="78" width="46" height="46" rx="4" fill="#d9ab73"/>
+  </g>
+  <text x="300" y="106" text-anchor="middle" font-size="11" fill="#7a4f17">loaded bed (n* high everywhere)</text>
+  <text x="300" y="64" text-anchor="middle" font-size="10.5" fill="#9a6b2f">IC: loaded profile carried over from end of adsorption</text>
+  <line x1="30" y1="101" x2="68" y2="101" stroke="#b5651d" stroke-width="2" marker-end="url(#arrdes)"/>
+  <line x1="482" y1="101" x2="540" y2="101" stroke="#b5651d" stroke-width="2" marker-end="url(#arrdes)"/>
+  <text x="600" y="97" text-anchor="middle" font-size="11" fill="#b5651d">product out</text>
+  <text x="600" y="113" text-anchor="middle" font-size="10" fill="#5d6470">(no BC needed)</text>
+  <text x="300" y="170" text-anchor="middle" font-size="11" fill="#b5651d">⟶ elution peak passes; <tspan font-weight="700">STOP when outlet C* ≤ C*_th,des</tspan></text>
+</svg>
+<figcaption>Figure 3b. The two phases side by side (shown generically; same layout for all four model variants).
+<strong>Adsorption</strong> loads an empty bed from the feed inlet until breakthrough; <strong>desorption</strong>
+inherits that loaded bed, switches the inlet to strip fluid, and runs until the outlet falls back below threshold.
+Both use one Dirichlet inlet (ghost cell) and a free outflow outlet.</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2 id="alldh">4. Model A — AlLDH adsorption <span class="pill alldh">AlLDH</span></h2>
+<p>
+  AlLDH (aluminium layered double hydroxide) selectively adsorbs Li⁺. Capture is a surface process described by
+  a Langmuir isotherm; the uptake rate follows <strong>pseudo‑second‑order (PSO)</strong> kinetics in the
+  dimensional model.
+</p>
+
+<h3 id="alldh-dim">4.1 Dimensional form <span class="pill dim">dimensional</span></h3>
+<p class="small">Source: <code>Model/AlLDH/diffrax_column_model.py</code> · parameters from <code>utils/Dataclasses.py</code></p>
+$$ \frac{\partial C}{\partial t} = -u_{int}\frac{\partial C}{\partial x} - \frac{1-\varepsilon}{\varepsilon}\rho_p\frac{\partial n}{\partial t},
+\qquad \frac{\partial n}{\partial t} = k_s\,(n_{eq}-n)\,\lvert n_{eq}-n\rvert .$$
+<p>
+  The kinetic term is <em>pseudo‑second‑order</em>: the rate is proportional to the <em>square</em> of the
+  distance from equilibrium (the \(|n_{eq}-n|\) keeps the sign correct for both uptake and release). The
+  isotherm \(n_{eq}(C)\) is supplied as a callable, so the same column code runs with a Temkin or Sips
+  isotherm fitted to literature data.
+</p>
+<table>
+  <tr><th>Parameter</th><th>Units</th><th>Meaning</th></tr>
+  <tr><td><code>u_inter</code></td><td>m/s</td><td>interstitial (pore) velocity, \(=u_{super}/\varepsilon\)</td></tr>
+  <tr><td><code>k_s</code></td><td>1/s</td><td>PSO rate constant</td></tr>
+  <tr><td><code>epsilon</code></td><td>—</td><td>bed porosity</td></tr>
+  <tr><td><code>C_in</code></td><td>mol/m³</td><td>feed concentration</td></tr>
+  <tr><td><code>L</code></td><td>m</td><td>column length</td></tr>
+  <tr><td><code>rho_p</code></td><td>kg/m³</td><td>particle density</td></tr>
+  <tr><td><code>isotherm</code></td><td>callable</td><td>\(C\mapsto n_{eq}\) (Temkin / Sips)</td></tr>
+</table>
+<p>
+  Discretized on \(N=100\) nodes with upwind advection, integrated with <code>diffrax</code>'s
+  <code>Tsit5</code> explicit solver. Adsorption stops when the cumulative breakthrough exceeds a
+  <code>loss_fraction</code>; desorption stops when the mean bed loading drops below a residual threshold.
+  This is the model the <a href="#optimization">optimizer</a> calls.
+</p>
+<div class="card">
+  <h4>Boundary &amp; initial conditions</h4>
+  <svg viewBox="0 0 820 150" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="11" style="display:block;margin:4px auto 6px;max-width:100%">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#2b6cb0"/></marker>
+      <marker id="d1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#b5651d"/></marker>
+    </defs>
+    <rect x="6" y="6" width="396" height="138" rx="10" fill="#f6f9fd" stroke="#2b6cb0"/>
+    <text x="20" y="26" font-weight="700" fill="#2b6cb0">① Adsorption</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#718096">IC: bed empty (n = r_des·n_eq)</text>
+    <rect x="40" y="64" width="28" height="30" rx="3" fill="#eef5fc" stroke="#2b6cb0" stroke-dasharray="3 3"/>
+    <g stroke="#4a5568"><rect x="78" y="64" width="28" height="30" rx="3" fill="#dbe9f7"/><rect x="110" y="64" width="28" height="30" rx="3" fill="#e8f1fb"/><rect x="142" y="64" width="28" height="30" rx="3" fill="#f3f8fd"/><rect x="174" y="64" width="28" height="30" rx="3" fill="#fbfdff"/></g>
+    <line x1="14" y1="79" x2="38" y2="79" stroke="#2b6cb0" stroke-width="1.6" marker-end="url(#a1)"/>
+    <line x1="204" y1="79" x2="236" y2="79" stroke="#2b6cb0" stroke-width="1.6" marker-end="url(#a1)"/>
+    <text x="262" y="82" font-size="10" fill="#5d6470">out</text>
+    <text x="120" y="113" text-anchor="middle" font-weight="700" font-size="10" fill="#2b6cb0">inlet C = C_in</text>
+    <text x="205" y="135" text-anchor="middle" font-size="10" fill="#2b6cb0">stop: breakthrough &gt; loss_fraction</text>
+    <rect x="418" y="6" width="396" height="138" rx="10" fill="#fdf8f2" stroke="#b5651d"/>
+    <text x="432" y="26" font-weight="700" fill="#b5651d">② Desorption</text>
+    <text x="552" y="50" text-anchor="middle" font-size="10" fill="#9a6b2f">IC: loaded bed (from ①)</text>
+    <rect x="452" y="64" width="28" height="30" rx="3" fill="#fdf3e9" stroke="#b5651d" stroke-dasharray="3 3"/>
+    <g stroke="#4a5568"><rect x="490" y="64" width="28" height="30" rx="3" fill="#e6c49b"/><rect x="522" y="64" width="28" height="30" rx="3" fill="#e1ba8b"/><rect x="554" y="64" width="28" height="30" rx="3" fill="#ddb07b"/><rect x="586" y="64" width="28" height="30" rx="3" fill="#d9ab73"/></g>
+    <line x1="426" y1="79" x2="450" y2="79" stroke="#b5651d" stroke-width="1.6" marker-end="url(#d1)"/>
+    <line x1="616" y1="79" x2="648" y2="79" stroke="#b5651d" stroke-width="1.6" marker-end="url(#d1)"/>
+    <text x="674" y="82" font-size="10" fill="#5d6470">out</text>
+    <text x="532" y="113" text-anchor="middle" font-weight="700" font-size="10" fill="#b5651d">inlet C = 0</text>
+    <text x="617" y="135" text-anchor="middle" font-size="10" fill="#b5651d">stop: ⟨n⟩/n_eq &lt; threshold</text>
+  </svg>
+  <table>
+    <tr><th></th><th>Adsorption</th><th>Desorption</th></tr>
+    <tr><td><strong>Inlet</strong> \(x{=}0\)</td><td>\(C(0,t)=C_{in}\)</td><td>\(C(0,t)=0\) (feed switched off)</td></tr>
+    <tr><td><strong>Outlet</strong> \(x{=}L\)</td><td colspan="2">convective outflow — no value imposed</td></tr>
+    <tr><td><strong>Initial</strong></td><td>\(C(x,0)=0;\ \ n(x,0)=r_{des}\,n_{eq}(C_{in})\) uniform (residual from previous strip)</td><td>\(C,\,n\) = profiles at the end of adsorption</td></tr>
+    <tr><td><strong>Stop when</strong></td><td>cumulative breakthrough fraction \(&gt;\) <code>loss_fraction</code></td><td>mean loading \(\langle n\rangle / n_{eq}(C_{in}) &lt;\) <code>desorption_threshold</code></td></tr>
+  </table>
+</div>
+
+<h3 id="alldh-nd">4.2 Non‑dimensional form <span class="pill nd">non‑dimensional</span></h3>
+<p class="small">Source: <code>Model/AlLDH/diffrax_non_dim_qmax.py</code> · driven by the <a href="#sensitivity">Sobol harness</a></p>
+<p>
+  Scaling \(C^*=C/c_{feed}\), loading \(n^*=q/q_{max}\), axial position \(\zeta=x/L\), and time by the
+  <em>interstitial residence time</em> \(\tau = t\,u_{int}/L\) collapses the model to three groups. The
+  porosity \(\varepsilon\) is absorbed into \(\Lambda\) and never appears explicitly:
+</p>
+$$ \frac{\partial C^*}{\partial \tau} = -\frac{\partial C^*}{\partial \zeta} - \Lambda\frac{\partial n^*}{\partial \tau},
+\qquad \frac{\partial n^*}{\partial \tau} = Da\,(n^*_{eq}-n^*),
+\qquad n^*_{eq}(C^*)=\frac{\theta\,C^*}{1+\theta\,C^*}. $$
+<table>
+  <tr><th>Group</th><th>Definition</th><th>Physical meaning</th></tr>
+  <tr><td>\(\Lambda\)</td><td>\(\dfrac{1-\varepsilon}{\varepsilon}\,\rho_p\,\dfrac{q_{max}}{c_{feed}}\)</td><td>solid capacity ÷ fluid delivery (how "deep" the bed is)</td></tr>
+  <tr><td>\(Da\)</td><td>\(k\,L/u_{int}\)</td><td>Damköhler — reaction rate ÷ advection rate (kinetic vs. residence time)</td></tr>
+  <tr><td>\(\theta\)</td><td>\(K\,c_{feed}\)</td><td>Langmuir feed favorability (isotherm steepness)</td></tr>
+</table>
+<div class="note">
+  Because loading is normalized by \(q_{max}\) (full Langmuir capacity), the feed equilibrium sits at
+  \(n^*_{eq}=\theta/(1+\theta)&lt;1\), not 1. The bed‑utilization metric \(U_b\) is therefore "fraction of total
+  capacity occupied." (A sibling normalization by \(q_{eq}(c_{feed})\) once existed; the repo now keeps only
+  the \(q_{max}\) variant — see the cleanup note in §12.)
+</div>
+<p>
+  <strong>Phase events.</strong> Adsorption ends when the outlet \(C^*(\zeta{=}1)\ge C^*_{th,ads}\);
+  desorption (run with inlet \(C^*=0\)) ends when the outlet falls to \(C^*(\zeta{=}1)\le C^*_{th,des}\).
+  A full cycle returns the QoIs in the <a href="#qoi">glossary</a>.
+</p>
+<div class="card">
+  <h4>Boundary &amp; initial conditions</h4>
+  <svg viewBox="0 0 820 150" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="11" style="display:block;margin:4px auto 6px;max-width:100%">
+    <defs>
+      <marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#2b6cb0"/></marker>
+      <marker id="d2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#b5651d"/></marker>
+    </defs>
+    <rect x="6" y="6" width="396" height="138" rx="10" fill="#f6f9fd" stroke="#2b6cb0"/>
+    <text x="20" y="26" font-weight="700" fill="#2b6cb0">① Adsorption</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#718096">IC: C* = 0,  n* = C*_th,des</text>
+    <rect x="40" y="64" width="28" height="30" rx="3" fill="#eef5fc" stroke="#2b6cb0" stroke-dasharray="3 3"/>
+    <g stroke="#4a5568"><rect x="78" y="64" width="28" height="30" rx="3" fill="#dbe9f7"/><rect x="110" y="64" width="28" height="30" rx="3" fill="#e8f1fb"/><rect x="142" y="64" width="28" height="30" rx="3" fill="#f3f8fd"/><rect x="174" y="64" width="28" height="30" rx="3" fill="#fbfdff"/></g>
+    <line x1="14" y1="79" x2="38" y2="79" stroke="#2b6cb0" stroke-width="1.6" marker-end="url(#a2)"/>
+    <line x1="204" y1="79" x2="236" y2="79" stroke="#2b6cb0" stroke-width="1.6" marker-end="url(#a2)"/>
+    <text x="262" y="82" font-size="10" fill="#5d6470">out</text>
+    <text x="120" y="113" text-anchor="middle" font-weight="700" font-size="10" fill="#2b6cb0">inlet C* = 1</text>
+    <text x="205" y="135" text-anchor="middle" font-size="10" fill="#2b6cb0">stop: C*(ζ=1) ≥ C*_th,ads</text>
+    <rect x="418" y="6" width="396" height="138" rx="10" fill="#fdf8f2" stroke="#b5651d"/>
+    <text x="432" y="26" font-weight="700" fill="#b5651d">② Desorption</text>
+    <text x="552" y="50" text-anchor="middle" font-size="10" fill="#9a6b2f">IC: loaded bed (from ①)</text>
+    <rect x="452" y="64" width="28" height="30" rx="3" fill="#fdf3e9" stroke="#b5651d" stroke-dasharray="3 3"/>
+    <g stroke="#4a5568"><rect x="490" y="64" width="28" height="30" rx="3" fill="#e6c49b"/><rect x="522" y="64" width="28" height="30" rx="3" fill="#e1ba8b"/><rect x="554" y="64" width="28" height="30" rx="3" fill="#ddb07b"/><rect x="586" y="64" width="28" height="30" rx="3" fill="#d9ab73"/></g>
+    <line x1="426" y1="79" x2="450" y2="79" stroke="#b5651d" stroke-width="1.6" marker-end="url(#d2)"/>
+    <line x1="616" y1="79" x2="648" y2="79" stroke="#b5651d" stroke-width="1.6" marker-end="url(#d2)"/>
+    <text x="674" y="82" font-size="10" fill="#5d6470">out</text>
+    <text x="532" y="113" text-anchor="middle" font-weight="700" font-size="10" fill="#b5651d">inlet C* = 0</text>
+    <text x="617" y="135" text-anchor="middle" font-size="10" fill="#b5651d">stop: C*(ζ=1) ≤ C*_th,des</text>
+  </svg>
+  <table>
+    <tr><th></th><th>Adsorption</th><th>Desorption</th></tr>
+    <tr><td><strong>Inlet</strong> \(\zeta{=}0\)</td><td>\(C^*(0,\tau)=1\)</td><td>\(C^*(0,\tau)=0\)</td></tr>
+    <tr><td><strong>Outlet</strong> \(\zeta{=}1\)</td><td colspan="2">outflow — no value imposed</td></tr>
+    <tr><td><strong>Initial</strong></td><td>\(C^*(\zeta,0)=0;\ \ n^*(\zeta,0)=C^*_{th,des}\) uniform; accumulator \(R_{outlet}=0\)</td><td>\(C^*,\,n^*\) = end‑of‑adsorption profiles; \(R_{outlet}\) reset to 0</td></tr>
+    <tr><td><strong>Stop when</strong></td><td>\(C^*(\zeta{=}1)\ge C^*_{th,ads}\)</td><td>\(C^*(\zeta{=}1)\le C^*_{th,des}\)</td></tr>
+  </table>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="ix">5. Model B — Ion exchange (IX) <span class="pill ix">IX</span></h2>
+<p>
+  In an ion‑exchange resin, capturing one Li⁺ <em>releases one H⁺</em> from the exchange site. The liquid
+  therefore acidifies as it loads, and that pH change feeds back on the isotherm. The IX model's defining
+  feature is that it tracks proton chemistry explicitly — it is a <strong>three‑field</strong> model
+  (\(A\): the cation, \(T\): a proton‑excess variable, \(n\): solid loading) instead of two.
+</p>
+
+<h3 id="ix-dim">5.1 Dimensional form <span class="pill dim">dimensional</span></h3>
+<p class="small">Source: <code>Model/IX/dim/ix_model.py</code></p>
+$$ \frac{\partial A}{\partial t} = -\frac{u_s}{\varepsilon}\frac{\partial A}{\partial x} - \frac{1-\varepsilon}{\varepsilon}\rho_p\,\dot n, \qquad
+   \frac{\partial T}{\partial t} = -\frac{u_s}{\varepsilon}\frac{\partial T}{\partial x} + \frac{1-\varepsilon}{\varepsilon}\rho_p\,\dot n .$$
+<p>The two fluid balances are mirror images: every mole of \(A\) that leaves the liquid puts a proton back
+  (anti‑symmetric coupling), so \(A+T\) is purely advected — a clean mass‑balance check. The free proton
+  concentration is recovered from the proton‑excess variable \(T\) by the water self‑ionization closure
+  (the positive root of \([H^+]^2-T[H^+]-K_w=0\)):</p>
+$$ [H^+] = \tfrac12\Big(T+\sqrt{T^2+4K_w}\Big), \qquad
+   n_{eq}=Q_{sites}\,\frac{K^\!*\,A}{[H^+]+K^\!*\,A}, \qquad \dot n = k\,(n_{eq}-n).$$
+<table>
+  <tr><th>Parameter</th><th>Units</th><th>Meaning</th></tr>
+  <tr><td><code>L, eps, rho_p</code></td><td>m, —, kg/m³</td><td>column length, porosity, particle density</td></tr>
+  <tr><td><code>u_s</code></td><td>m/s</td><td>superficial velocity</td></tr>
+  <tr><td><code>Q_sites</code></td><td>mol/kg</td><td>ion‑exchange capacity (fixed sites)</td></tr>
+  <tr><td><code>Kstar</code></td><td>—</td><td>mass‑action constant for A⁺/H⁺ exchange</td></tr>
+  <tr><td><code>k</code></td><td>1/s</td><td>LDF rate constant (first‑order here)</td></tr>
+  <tr><td><code>Kw</code></td><td>(mol/m³)²</td><td>water ionization constant</td></tr>
+  <tr><td><code>A_in, T_in</code></td><td>mol/m³</td><td>inlet cation conc. and proton excess</td></tr>
+  <tr><td><code>eta_min, n_residual</code></td><td>—, mol/kg</td><td>breakthrough efficiency &amp; desorption stop thresholds</td></tr>
+</table>
+<p>Note IX uses <em>linear</em> LDF kinetics (\(\dot n\propto(n_{eq}-n)\)), whereas the dimensional AlLDH uses
+  pseudo‑second‑order. Float64 is mandatory — the \(4K_w\) term under the square root would vanish in float32.</p>
+<div class="card">
+  <h4>Boundary &amp; initial conditions</h4>
+  <svg viewBox="0 0 820 150" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="11" style="display:block;margin:4px auto 6px;max-width:100%">
+    <defs>
+      <marker id="a3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#2b6cb0"/></marker>
+      <marker id="d3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#b5651d"/></marker>
+    </defs>
+    <rect x="6" y="6" width="396" height="138" rx="10" fill="#f6f9fd" stroke="#2b6cb0"/>
+    <text x="20" y="26" font-weight="700" fill="#2b6cb0">① Adsorption</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#718096">IC: empty bed (A = T = n = 0)</text>
+    <rect x="40" y="64" width="28" height="30" rx="3" fill="#eef5fc" stroke="#2b6cb0" stroke-dasharray="3 3"/>
+    <g stroke="#4a5568"><rect x="78" y="64" width="28" height="30" rx="3" fill="#dbe9f7"/><rect x="110" y="64" width="28" height="30" rx="3" fill="#e8f1fb"/><rect x="142" y="64" width="28" height="30" rx="3" fill="#f3f8fd"/><rect x="174" y="64" width="28" height="30" rx="3" fill="#fbfdff"/></g>
+    <line x1="14" y1="79" x2="38" y2="79" stroke="#2b6cb0" stroke-width="1.6" marker-end="url(#a3)"/>
+    <line x1="204" y1="79" x2="236" y2="79" stroke="#2b6cb0" stroke-width="1.6" marker-end="url(#a3)"/>
+    <text x="262" y="82" font-size="10" fill="#5d6470">out</text>
+    <text x="120" y="113" text-anchor="middle" font-weight="700" font-size="10" fill="#2b6cb0">inlet A = A_in, T = T_in</text>
+    <text x="205" y="135" text-anchor="middle" font-size="10" fill="#2b6cb0">stop: η = 1−A_out/A_in &lt; η_min</text>
+    <rect x="418" y="6" width="396" height="138" rx="10" fill="#fdf8f2" stroke="#b5651d"/>
+    <text x="432" y="26" font-weight="700" fill="#b5651d">② Desorption</text>
+    <text x="552" y="50" text-anchor="middle" font-size="10" fill="#9a6b2f">IC: loaded bed (from ①)</text>
+    <rect x="452" y="64" width="28" height="30" rx="3" fill="#fdf3e9" stroke="#b5651d" stroke-dasharray="3 3"/>
+    <g stroke="#4a5568"><rect x="490" y="64" width="28" height="30" rx="3" fill="#e6c49b"/><rect x="522" y="64" width="28" height="30" rx="3" fill="#e1ba8b"/><rect x="554" y="64" width="28" height="30" rx="3" fill="#ddb07b"/><rect x="586" y="64" width="28" height="30" rx="3" fill="#d9ab73"/></g>
+    <line x1="426" y1="79" x2="450" y2="79" stroke="#b5651d" stroke-width="1.6" marker-end="url(#d3)"/>
+    <line x1="616" y1="79" x2="648" y2="79" stroke="#b5651d" stroke-width="1.6" marker-end="url(#d3)"/>
+    <text x="674" y="82" font-size="10" fill="#5d6470">out</text>
+    <text x="532" y="113" text-anchor="middle" font-weight="700" font-size="10" fill="#b5651d">inlet A, T = strip fluid</text>
+    <text x="617" y="135" text-anchor="middle" font-size="10" fill="#b5651d">stop: ⟨n⟩ &lt; n_residual</text>
+  </svg>
+  <table>
+    <tr><th></th><th>Adsorption</th><th>Desorption</th></tr>
+    <tr><td><strong>Inlet</strong> \(x{=}0\)</td><td>\(A(0)=A_{in},\ T(0)=T_{in}\) (feed)</td><td>\(A(0),\,T(0)\) = stripping‑fluid values</td></tr>
+    <tr><td><strong>Outlet</strong> \(x{=}L\)</td><td colspan="2">outflow — no value imposed</td></tr>
+    <tr><td><strong>Initial</strong></td><td>uniform empty bed \(A=T=n=0\)</td><td>\(A,\,T,\,n\) = end‑of‑adsorption profiles</td></tr>
+    <tr><td><strong>Stop when</strong></td><td>extraction efficiency \(\eta = 1 - A_{out}/A_{in} &lt;\) <code>eta_min</code></td><td>mean loading \(\langle n\rangle &lt;\) <code>n_residual</code></td></tr>
+  </table>
+  <p class="small">Phases are chained by <code>run_cycle</code>: each phase's inlet \((A_{in},T_{in})\) comes from
+    its <code>PhaseConfig</code>, and the desorption phase is initialized from the loaded state handed over by adsorption.</p>
+</div>
+
+<h3 id="ix-nd">5.2 Non‑dimensional form <span class="pill nd">non‑dimensional</span></h3>
+<p class="small">Source: <code>Model/IX/NonDim/ix_nondim_qmax.py</code> · driven by the <a href="#sensitivity">Sobol harness</a></p>
+<p>With \(A^*=A/A_{in}\), \(n^*=q/q_{max}\), \(\zeta=x/L\), \(\tau=t\,u_{int}/L\) and \(H^*=[H^+]/A_{in}\):</p>
+$$ \frac{\partial A^*}{\partial\tau}=-\frac{\partial A^*}{\partial\zeta}-\Lambda\,\dot n^*,\qquad
+   \frac{\partial T^*}{\partial\tau}=-\frac{\partial T^*}{\partial\zeta}+\Lambda\,\dot n^*,$$
+$$ \dot n^* = Da\,(n^*_{eq}-n^*),\qquad
+   n^*_{eq}=\frac{K^\!*\,A^*}{H^*+K^\!*\,A^*},\qquad
+   H^*=\tfrac12\Big(T^*+\sqrt{T^{*2}+4\omega}\Big).$$
+<p>It is the <em>same advection–LDF skeleton</em> as AlLDH (compare the equations above), with two extra groups
+  for the proton chemistry:</p>
+<table>
+  <tr><th>Group</th><th>Definition / role</th></tr>
+  <tr><td>\(\Lambda\)</td><td>\(\frac{1-\varepsilon}{\varepsilon}\rho_p\,q_{max}/A_{ref}\) — capacity ratio (same role as AlLDH)</td></tr>
+  <tr><td>\(Da\)</td><td>\(kL/u_{int}\) — Damköhler (same role as AlLDH)</td></tr>
+  <tr><td>\(K^\!*\)</td><td>bare dimensionless mass‑action constant in the isotherm</td></tr>
+  <tr><td>\(\omega\)</td><td>\(K_w/A_{ref}^2\) — dimensionless water‑floor term in the \(H^*\) closure</td></tr>
+  <tr><td>\(H^*_{in,ads},\,H^*_{in,des}\)</td><td>inlet proton level (feed pH vs. strip pH); set the inlet \(T^*=H^*-\omega/H^*\)</td></tr>
+</table>
+<div class="note tip">
+  <strong>The buffer axis \(B\).</strong> The Sobol harness found the QoIs depend only on the <em>ratio</em>
+  \(B=\omega/H^*_{in,ads}=[\mathrm{OH^-}]_{in}/A_{in}\) (feed basicity), not on \(\omega\) and \(H^*_{in,ads}\)
+  separately. So a single sampled <code>log10_buffer</code> axis replaces both: \(\omega\) is fixed at a
+  reference and \(H^*_{in,ads}=\omega/B\) is derived. The bed only loads when \(B&gt;1-C^*_{th,ads}\).
+</div>
+<div class="card">
+  <h4>Boundary &amp; initial conditions</h4>
+  <svg viewBox="0 0 820 150" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="11" style="display:block;margin:4px auto 6px;max-width:100%">
+    <defs>
+      <marker id="a4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#2b6cb0"/></marker>
+      <marker id="d4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#b5651d"/></marker>
+    </defs>
+    <rect x="6" y="6" width="396" height="138" rx="10" fill="#f6f9fd" stroke="#2b6cb0"/>
+    <text x="20" y="26" font-weight="700" fill="#2b6cb0">① Adsorption (load)</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#718096">IC: A* = 0, n* = 0, T* = T_load</text>
+    <rect x="40" y="64" width="28" height="30" rx="3" fill="#eef5fc" stroke="#2b6cb0" stroke-dasharray="3 3"/>
+    <g stroke="#4a5568"><rect x="78" y="64" width="28" height="30" rx="3" fill="#dbe9f7"/><rect x="110" y="64" width="28" height="30" rx="3" fill="#e8f1fb"/><rect x="142" y="64" width="28" height="30" rx="3" fill="#f3f8fd"/><rect x="174" y="64" width="28" height="30" rx="3" fill="#fbfdff"/></g>
+    <line x1="14" y1="79" x2="38" y2="79" stroke="#2b6cb0" stroke-width="1.6" marker-end="url(#a4)"/>
+    <line x1="204" y1="79" x2="236" y2="79" stroke="#2b6cb0" stroke-width="1.6" marker-end="url(#a4)"/>
+    <text x="262" y="82" font-size="10" fill="#5d6470">out</text>
+    <text x="120" y="113" text-anchor="middle" font-weight="700" font-size="10" fill="#2b6cb0">inlet A* = 1, T* ← H*_in,ads</text>
+    <text x="205" y="135" text-anchor="middle" font-size="10" fill="#2b6cb0">stop: A*(ζ=1) ≥ C*_th,ads</text>
+    <rect x="418" y="6" width="396" height="138" rx="10" fill="#fdf8f2" stroke="#b5651d"/>
+    <text x="432" y="26" font-weight="700" fill="#b5651d">② Desorption (strip)</text>
+    <text x="552" y="50" text-anchor="middle" font-size="10" fill="#9a6b2f">IC: loaded bed (from ①)</text>
+    <rect x="452" y="64" width="28" height="30" rx="3" fill="#fdf3e9" stroke="#b5651d" stroke-dasharray="3 3"/>
+    <g stroke="#4a5568"><rect x="490" y="64" width="28" height="30" rx="3" fill="#e6c49b"/><rect x="522" y="64" width="28" height="30" rx="3" fill="#e1ba8b"/><rect x="554" y="64" width="28" height="30" rx="3" fill="#ddb07b"/><rect x="586" y="64" width="28" height="30" rx="3" fill="#d9ab73"/></g>
+    <line x1="426" y1="79" x2="450" y2="79" stroke="#b5651d" stroke-width="1.6" marker-end="url(#d4)"/>
+    <line x1="616" y1="79" x2="648" y2="79" stroke="#b5651d" stroke-width="1.6" marker-end="url(#d4)"/>
+    <text x="674" y="82" font-size="10" fill="#5d6470">out</text>
+    <text x="532" y="113" text-anchor="middle" font-weight="700" font-size="10" fill="#b5651d">inlet A* = 0, T* ← H*_in,des</text>
+    <text x="617" y="135" text-anchor="middle" font-size="10" fill="#b5651d">stop: A*(ζ=1) ≤ C*_th,des</text>
+  </svg>
+  <table>
+    <tr><th></th><th>Adsorption (load)</th><th>Desorption (strip)</th></tr>
+    <tr><td><strong>Inlet</strong> \(\zeta{=}0\)</td><td>\(A^*(0)=1;\ T^*(0)=H^*_{in,ads}-\omega/H^*_{in,ads}\)</td><td>\(A^*(0)=0;\ T^*(0)=H^*_{in,des}-\omega/H^*_{in,des}\)</td></tr>
+    <tr><td><strong>Outlet</strong> \(\zeta{=}1\)</td><td colspan="2">outflow — no value imposed</td></tr>
+    <tr><td><strong>Initial</strong></td><td>\(A^*=0,\ n^*=0,\ T^*=T^*_{load}\) (bed pre‑equilibrated at feed proton level); \(R_{outlet}=0\)</td><td>\(A^*,\,T^*,\,n^*\) = end‑of‑load profiles; \(R_{outlet}\) reset to 0</td></tr>
+    <tr><td><strong>Stop when</strong></td><td>\(A^*(\zeta{=}1)\ge C^*_{th,ads}\)</td><td>\(A^*(\zeta{=}1)\le C^*_{th,des}\)</td></tr>
+  </table>
+  <p class="small">The inlet \(T^*\) is set from the desired inlet proton level through the exact inverse
+    \(T^*=H^*-\omega/H^*\), so that \(H^*\) at the inlet equals the feed pH (load) or strip pH (desorb).</p>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="nondim">6. Why non‑dimensionalize?</h2>
+<p>
+  The dimensional models have 6–12 dimensional knobs each (lengths, velocities, densities, rate constants).
+  Many combinations are physically equivalent — doubling the column length and the velocity together changes
+  nothing. Non‑dimensionalization collapses those knobs into a handful of <strong>independent</strong> groups
+  (\(\Lambda, Da, \theta/K^*, \ldots\)) that fully determine the dimensionless solution. This is what lets the
+  sensitivity study answer "<em>which physics matters?</em>" in a way that transfers between the two models:
+  both reduce to the same \(\Lambda\)–\(Da\) advection/kinetics core, so their Sobol indices are directly
+  comparable.
+</p>
+<figure>
+<svg viewBox="0 0 820 230" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="12.5">
+  <defs><marker id="arr4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#4a5568"/></marker></defs>
+  <text x="120" y="22" text-anchor="middle" font-weight="700" fill="#718096">Dimensional knobs</text>
+  <g fill="#4a5568">
+    <text x="120" y="55" text-anchor="middle">ρ_p, q_max, c_feed, ε</text>
+    <text x="120" y="105" text-anchor="middle">k, L, u_int</text>
+    <text x="120" y="155" text-anchor="middle">K (affinity)</text>
+  </g>
+  <line x1="230" y1="50" x2="330" y2="60" stroke="#4a5568" marker-end="url(#arr4)"/>
+  <line x1="230" y1="105" x2="330" y2="110" stroke="#4a5568" marker-end="url(#arr4)"/>
+  <line x1="230" y1="150" x2="330" y2="160" stroke="#4a5568" marker-end="url(#arr4)"/>
+  <text x="560" y="22" text-anchor="middle" font-weight="700" fill="#2b6cb0">Dimensionless groups</text>
+  <rect x="350" y="42" width="240" height="38" rx="8" fill="#eef5fc" stroke="#2b6cb0"/>
+  <text x="470" y="66" text-anchor="middle" fill="#2b6cb0">Λ = (1−ε)/ε · ρ_p · q_max / c_feed</text>
+  <rect x="350" y="92" width="240" height="38" rx="8" fill="#eef5fc" stroke="#2b6cb0"/>
+  <text x="470" y="116" text-anchor="middle" fill="#2b6cb0">Da = k·L / u_int</text>
+  <rect x="350" y="142" width="240" height="38" rx="8" fill="#eef5fc" stroke="#2b6cb0"/>
+  <text x="470" y="166" text-anchor="middle" fill="#2b6cb0">θ = K·c_feed   (AlLDH) / K* (IX)</text>
+  <text x="700" y="95" text-anchor="middle" font-size="11" fill="#5d6470">these three (plus</text>
+  <text x="700" y="113" text-anchor="middle" font-size="11" fill="#5d6470">pH groups for IX)</text>
+  <text x="700" y="131" text-anchor="middle" font-size="11" fill="#5d6470">set the solution</text>
+</svg>
+<figcaption>Figure 3. Many dimensional parameters → a few dimensionless groups that actually drive behavior.</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2 id="numerics">7. Numerical methods</h2>
+<table>
+  <tr><th>Aspect</th><th>Choice</th><th>Why</th></tr>
+  <tr><td>Spatial grid</td><td>\(N=50\) (non‑dim), \(100\) (dim AlLDH); cell‑centred</td><td>matched across models for a common discretization‑error budget</td></tr>
+  <tr><td>Advection</td><td>first‑order upwind with a Dirichlet inlet ghost cell</td><td>stable, monotone for the moving front; dispersion is numerical only</td></tr>
+  <tr><td>ODE solver</td><td><code>diffrax.Tsit5</code> (explicit RK)</td><td>5–10× faster than implicit Kvaerno here; the stiff corner is trimmed out of the sampling box instead</td></tr>
+  <tr><td>Step control</td><td>PID controller, rtol \(10^{-3}\)–\(10^{-4}\), atol \(10^{-6}\)–\(10^{-7}\)</td><td>adapts to the moving mass‑transfer zone</td></tr>
+  <tr><td>Phase end</td><td><code>diffrax.Event</code> on an outlet‑concentration threshold</td><td>physically meaningful breakthrough / elution cutoffs</td></tr>
+  <tr><td>Precision</td><td>float64 (mandatory for IX)</td><td>the \(4\omega\) term in the \(H^*\) closure underflows in float32</td></tr>
+  <tr><td>Robustness</td><td><code>throw=False</code> + NaN censoring</td><td>a sample that exhausts <code>max_steps</code> is marked NaN and skipped, not crashed</td></tr>
+</table>
+<div class="note">
+  The forward model is wrapped in <code>@eqx.filter_jit</code> (JAX just‑in‑time compilation). A hard rule in
+  this codebase: <strong>no Python <code>print</code>/<code>logging</code> inside a JIT‑compiled body</strong> —
+  it would fire once at trace time, not per run. All runtime logging lives in the orchestration layer
+  (the Sobol driver / optimizer).
+</div>
+
+<!-- ============================================================= -->
+<h2 id="sensitivity">8. Sensitivity analysis (Sobol) <span class="pill nd">non‑dimensional</span></h2>
+<p>
+  <strong>Goal:</strong> quantify how much each dimensionless input drives each performance metric, including
+  interactions. The method is <strong>variance‑based (Sobol) global sensitivity analysis</strong> via
+  <a href="https://salib.readthedocs.io">SALib</a>. For each output, Sobol decomposes its variance over the
+  input box into contributions from each input and their combinations:
+</p>
+<ul>
+  <li><strong>\(S_1\) (first‑order):</strong> fraction of output variance explained by an input <em>alone</em>.</li>
+  <li><strong>\(S_T\) (total‑order):</strong> an input's contribution <em>including</em> all its interactions. \(S_T-S_1\) is its interaction load.</li>
+  <li><strong>\(S_2\) (second‑order, optional):</strong> variance from a specific <em>pair</em> of inputs.</li>
+</ul>
+
+<figure>
+<svg viewBox="0 0 900 250" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="12.5">
+  <defs><marker id="arr5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#2b6cb0"/></marker></defs>
+  <g>
+    <rect x="20" y="90" width="135" height="64" rx="10" fill="#fff" stroke="#2b6cb0"/>
+    <text x="87" y="116" text-anchor="middle" font-weight="700" fill="#2b6cb0">Adapter</text>
+    <text x="87" y="134" text-anchor="middle" font-size="11" fill="#5d6470">names, bounds,</text>
+    <text x="87" y="148" text-anchor="middle" font-size="11" fill="#5d6470">run(), outputs</text>
+
+    <rect x="195" y="90" width="135" height="64" rx="10" fill="#eef5fc" stroke="#2b6cb0"/>
+    <text x="262" y="112" text-anchor="middle" font-weight="700" fill="#2b6cb0">Sample</text>
+    <text x="262" y="130" text-anchor="middle" font-size="11" fill="#5d6470">Saltelli /</text>
+    <text x="262" y="144" text-anchor="middle" font-size="11" fill="#5d6470">Sobol sequence</text>
+
+    <rect x="370" y="90" width="135" height="64" rx="10" fill="#eef5fc" stroke="#2b6cb0"/>
+    <text x="437" y="112" text-anchor="middle" font-weight="700" fill="#2b6cb0">Evaluate</text>
+    <text x="437" y="130" text-anchor="middle" font-size="11" fill="#5d6470">run_cycle / qois</text>
+    <text x="437" y="144" text-anchor="middle" font-size="11" fill="#5d6470">per sample (JIT)</text>
+
+    <rect x="545" y="90" width="135" height="64" rx="10" fill="#eef5fc" stroke="#2b6cb0"/>
+    <text x="612" y="112" text-anchor="middle" font-weight="700" fill="#2b6cb0">Analyze</text>
+    <text x="612" y="130" text-anchor="middle" font-size="11" fill="#5d6470">Sobol indices</text>
+    <text x="612" y="144" text-anchor="middle" font-size="11" fill="#5d6470">S1, ST, (S2)</text>
+
+    <rect x="720" y="90" width="150" height="64" rx="10" fill="#f4f5f8" stroke="#4a5568"/>
+    <text x="795" y="112" text-anchor="middle" font-weight="700" fill="#4a5568">Output</text>
+    <text x="795" y="130" text-anchor="middle" font-size="11" fill="#5d6470">CSV + bar charts</text>
+    <text x="795" y="144" text-anchor="middle" font-size="11" fill="#5d6470">scatter "DataPlots"</text>
+
+    <line x1="155" y1="122" x2="195" y2="122" stroke="#2b6cb0" marker-end="url(#arr5)"/>
+    <line x1="330" y1="122" x2="370" y2="122" stroke="#2b6cb0" marker-end="url(#arr5)"/>
+    <line x1="505" y1="122" x2="545" y2="122" stroke="#2b6cb0" marker-end="url(#arr5)"/>
+    <line x1="680" y1="122" x2="720" y2="122" stroke="#2b6cb0" marker-end="url(#arr5)"/>
+  </g>
+  <text x="437" y="40" text-anchor="middle" font-weight="700" fill="#1d1d22">Sensitivity pipeline (Sensitivity/sobol_driver.py)</text>
+  <text x="437" y="200" text-anchor="middle" font-size="11" fill="#718096">The driver is model‑agnostic; the adapter is the only model‑specific piece. The "joint" runner does AlLDH + IX in one go.</text>
+</svg>
+<figcaption>Figure 4. The Sobol sweep. A <code>SobolModel</code> adapter declares the inputs/outputs; the generic
+driver samples, evaluates, analyzes, and writes results.</figcaption>
+</figure>
+
+<h4>Architecture: driver + adapters</h4>
+<p>
+  The design cleanly separates the generic from the specific. <code>Sensitivity/sobol_driver.py</code> owns the
+  sampling loop, SALib analysis, CSV writing, and plotting. A small <strong>adapter</strong>
+  (<code>Sensitivity/adapters/*_qmax.py</code>) is a frozen <code>SobolModel</code> dataclass that declares,
+  for one study: the parameter <code>names</code>, their <code>bounds</code> and distributions, a
+  <code>run(vec)→{metric: value}</code> closure that calls the forward model, and the named
+  <code>outputs</code>. To study a new model you write one adapter.
+</p>
+<table>
+  <tr><th>Model</th><th>Sampled inputs (typical "full" study)</th><th>Bounds note</th></tr>
+  <tr><td><span class="pill alldh">AlLDH</span></td><td><code>log10_Lambda, log10_Da, log10_theta, C_thresh_ads, C_thresh_des</code></td><td>several presets (<code>legacy</code>, <code>alldh_log</code>, <code>ix</code>) so AlLDH and IX can be compared on matched ranges</td></tr>
+  <tr><td><span class="pill ix">IX</span></td><td><code>log10_Lambda, log10_Da, log10_K_star, C_thresh_ads, log10_H_in_des, log10_buffer, C_thresh_des</code></td><td>"screen" scope drops the last three; \(\omega\) is fixed and the buffer \(B\) is the pH axis</td></tr>
+</table>
+<p>The studies produce the metrics in the <a href="#qoi">glossary</a> (adsorption/desorption times, bed
+  utilization, recovered amount, productivity, wash/release split, and outlet pH for IX). Inputs are sampled
+  uniformly, usually in \(\log_{10}\) so that \(\Lambda, Da, K^*\) span orders of magnitude evenly.</p>
+
+<!-- ============================================================= -->
+<h2 id="optimization">9. Optimization (NSGA‑II) <span class="pill dim">dimensional</span></h2>
+<p class="small">Source: <code>Model/AlLDH/multi_optim.py</code> (uses the dimensional AlLDH column)</p>
+<p>
+  <strong>Goal:</strong> find column designs that are simultaneously cheap to run and productive. This is a
+  <strong>two‑objective</strong> problem with no single best answer — instead there is a <em>Pareto front</em>
+  of non‑dominated trade‑offs, found with the genetic algorithm <strong>NSGA‑II</strong> (via
+  <a href="https://pymoo.org">pymoo</a>).
+</p>
+<div class="two-col">
+  <div class="card">
+    <h4>Decide (5 design variables)</h4>
+    <ul>
+      <li><code>L</code> — column length [m]</li>
+      <li><code>u_super</code> — superficial velocity [m/s]</li>
+      <li><code>des_threshold</code> — desorption stop level</li>
+      <li><code>k_s</code> — kinetic rate constant [1/s]</li>
+      <li><code>epsilon</code> — bed porosity</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>Optimize (2 objectives)</h4>
+    <ul>
+      <li><strong>minimize</strong> SEC — specific energy consumption [J/mol], pumping energy ÷ Li recovered</li>
+      <li><strong>maximize</strong> productivity [mol·m⁻²·s⁻¹], Li recovered ÷ cycle time ÷ length</li>
+    </ul>
+    <p class="small">Pumping energy uses the <strong>Ergun equation</strong> for pressure drop through the
+      packed bed; infeasible individuals (solver failure, no net recovery) are rejected with \(\infty\).</p>
+  </div>
+</div>
+
+<figure>
+<svg viewBox="0 0 880 250" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="12.5">
+  <defs><marker id="arr6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#b5651d"/></marker></defs>
+  <rect x="20" y="95" width="120" height="58" rx="10" fill="#fff" stroke="#b5651d"/>
+  <text x="80" y="120" text-anchor="middle" font-weight="700" fill="#b5651d">Population</text>
+  <text x="80" y="138" text-anchor="middle" font-size="11" fill="#5d6470">candidate designs</text>
+
+  <rect x="185" y="95" width="135" height="58" rx="10" fill="#fdf3e9" stroke="#b5651d"/>
+  <text x="252" y="116" text-anchor="middle" font-weight="700" fill="#b5651d">Evaluate</text>
+  <text x="252" y="134" text-anchor="middle" font-size="11" fill="#5d6470">dim. AlLDH cycle</text>
+  <text x="252" y="148" text-anchor="middle" font-size="10" fill="#5d6470">→ SEC, productivity</text>
+
+  <rect x="365" y="95" width="135" height="58" rx="10" fill="#fdf3e9" stroke="#b5651d"/>
+  <text x="432" y="116" text-anchor="middle" font-weight="700" fill="#b5651d">NSGA‑II</text>
+  <text x="432" y="134" text-anchor="middle" font-size="11" fill="#5d6470">rank, select,</text>
+  <text x="432" y="148" text-anchor="middle" font-size="11" fill="#5d6470">crossover, mutate</text>
+
+  <path d="M432,95 C432,55 252,55 252,93" fill="none" stroke="#b5651d" stroke-dasharray="4 3" marker-end="url(#arr6)"/>
+  <text x="342" y="48" text-anchor="middle" font-size="11" fill="#b5651d">next generation</text>
+
+  <line x1="140" y1="124" x2="185" y2="124" stroke="#b5651d" marker-end="url(#arr6)"/>
+  <line x1="320" y1="124" x2="365" y2="124" stroke="#b5651d" marker-end="url(#arr6)"/>
+  <line x1="500" y1="124" x2="560" y2="124" stroke="#b5651d" marker-end="url(#arr6)"/>
+
+  <!-- pareto plot -->
+  <line x1="600" y1="180" x2="780" y2="180" stroke="#4a5568"/>
+  <line x1="600" y1="180" x2="600" y2="60" stroke="#4a5568"/>
+  <text x="690" y="205" text-anchor="middle" font-size="11" fill="#5d6470">SEC (min →)</text>
+  <text x="588" y="120" font-size="11" fill="#5d6470" transform="rotate(-90 588,120)" text-anchor="middle">productivity</text>
+  <path d="M615,70 C660,95 700,140 770,168" fill="none" stroke="#b5651d" stroke-width="2.5"/>
+  <circle cx="615" cy="70" r="4" fill="#b5651d"/><circle cx="660" cy="98" r="4" fill="#b5651d"/>
+  <circle cx="700" cy="138" r="4" fill="#b5651d"/><circle cx="745" cy="160" r="4" fill="#b5651d"/>
+  <text x="690" y="45" text-anchor="middle" font-weight="700" font-size="11" fill="#b5651d">Pareto front</text>
+</svg>
+<figcaption>Figure 5. NSGA‑II evolves a population of designs over generations; the survivors trace the
+SEC–productivity Pareto front. The script also reports the min‑SEC, max‑productivity, and "elbow" designs.</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2 id="qoi">10. Quantity‑of‑interest glossary</h2>
+<p>Both non‑dimensional models return the same metric set (IX adds two pH diagnostics), so they can be compared
+   directly. All are computed over one load→desorb cycle.</p>
+<table>
+  <tr><th>Metric</th><th>Meaning</th></tr>
+  <tr><td><code>tau_ads</code></td><td>dimensionless adsorption time to breakthrough cutoff</td></tr>
+  <tr><td><code>tau_des</code></td><td>dimensionless desorption time to elution cutoff</td></tr>
+  <tr><td><code>U_b</code></td><td>bed utilization at end of loading — \(\int n^*\,d\zeta\), the fraction of \(q_{max}\) occupied</td></tr>
+  <tr><td><code>R_outlet_des</code></td><td>amount recovered at the outlet during desorption, \(\int C^*(\zeta{=}1)\,d\tau\)</td></tr>
+  <tr><td><code>productivity</code></td><td><code>R_outlet_des</code> ÷ (<code>tau_ads</code> + <code>tau_des</code>) — recovery per unit cycle time</td></tr>
+  <tr><td><code>R_release</code></td><td>amount released from the solid phase, \(\Lambda\,(U_b-\langle n\rangle_{des,end})\)</td></tr>
+  <tr><td><code>R_wash</code></td><td>solution‑phase "wash" mass left in the void at switch‑over; \(R_{release}+R_{wash}\approx R_{outlet,des}\) by mass balance</td></tr>
+  <tr><td><code>R_wash_over_R_release</code></td><td>diagnostic ratio: how much recovery is genuine elution vs. just flushing the void</td></tr>
+  <tr><td><code>H_out</code>, <code>H_out_over_H_in</code> <span class="pill ix">IX</span></td><td>outlet proton level at end of desorption (acid breakthrough diagnostic), absolute and relative to feed</td></tr>
+</table>
+
+<!-- ============================================================= -->
+<h2 id="run">11. How to run it</h2>
+<h4>Install</h4>
+<pre><span class="c"># Python 3.13+; see requirements.txt</span>
+pip install -r requirements.txt
+<span class="c"># key deps: jax, diffrax, equinox, SALib, pymoo, pandas, matplotlib, tqdm</span></pre>
+
+<h4>Sensitivity sweep (both models, "joint" runner)</h4>
+<pre><span class="c"># Runs the AlLDH + IX non-dim q_max models through one Sobol study each.</span>
+python -m Sensitivity.run_joint_qmax --output-dir Results/Sensitivity/my_run \
+       --N 2048 --ix-scope full --bounds ix
+<span class="c"># add --second-order for S2 indices; --data-plots for scatter PNG/SVGs;</span>
+<span class="c"># --log10-da-range / --log10-lambda-range ... to trim the sampling box.</span></pre>
+<p class="small">The driver also exposes <code>run_sobol(model, N=…)</code> directly if you build a single
+  adapter via <code>get_model()</code> / <code>get_full_model()</code> and want one model only.</p>
+
+<h4>Optimization (dimensional AlLDH)</h4>
+<pre>python Model/AlLDH/multi_optim.py --brine_concentration 50 \
+       --loss-fraction 0.01 --output_dir Results/Optimization/my_opt
+<span class="c"># writes pareto_front_&lt;loss&gt;.csv and a Pareto plot.</span></pre>
+<div class="note">
+  Set the log level via the environment, e.g. <code>LOG_LEVEL=DEBUG python -m Sensitivity.run_joint_qmax …</code>.
+  JAX is forced onto CPU and float64 inside the runners.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="map">12. Repository map</h2>
+<pre><span class="k">Model/</span>
+  <span class="k">AlLDH/</span>
+    diffrax_non_dim_qmax.py   <span class="c"># ★ AlLDH non-dim model (Sobol)</span>
+    diffrax_column_model.py   <span class="c"># AlLDH dimensional column (optimizer)</span>
+    multi_optim.py            <span class="c"># ★ NSGA-II optimization driver</span>
+  <span class="k">IX/</span>
+    <span class="k">NonDim/</span>ix_nondim_qmax.py   <span class="c"># ★ IX non-dim model (Sobol)</span>
+    <span class="k">NonDim/</span>verification_qmax.py<span class="c"># mass-balance / convergence checks</span>
+    <span class="k">dim/</span>ix_model.py          <span class="c"># IX dimensional column</span>
+    <span class="k">dim/</span>{demo,plotting,verification}.py
+<span class="k">Sensitivity/</span>
+  sobol_driver.py             <span class="c"># ★ generic Sobol engine (SALib)</span>
+  run_joint_qmax.py           <span class="c"># ★ entry point: AlLDH + IX sweep</span>
+  <span class="k">adapters/</span>alldh_nondim_qmax.py <span class="c"># AlLDH → SobolModel</span>
+  <span class="k">adapters/</span>ix_nondim_qmax.py    <span class="c"># IX → SobolModel</span>
+<span class="k">utils/</span>Dataclasses.py          <span class="c"># Study / ColumnParameters (dim params, isotherms)</span>
+<span class="k">Results/</span>                      <span class="c"># generated CSVs + plots (sweeps, optimizations)</span>
+<span class="k">LiteratureReview/</span>             <span class="c"># fitted isotherm/kinetics data (isotherm_kinetics.json)</span></pre>
+<div class="note warn">
+  <strong>One thing to know about the cleanup.</strong> The repo was trimmed to the
+  <em>q_max‑normalized</em> non‑dimensional models only (an older feed‑equilibrium‑normalized variant and a
+  standalone Sobol script were removed). The single sensitivity entry point is
+  <code>Sensitivity.run_joint_qmax</code>; there is no separate single‑model runner anymore. Comments in some
+  files still reference the deleted <code>diffrax_non_dim.py</code>/<code>ix_nondim.py</code> by name — those
+  are historical breadcrumbs, not live imports.
+</div>
+
+<hr>
+<p class="small">★ marks the files most worth reading first. The two non‑dimensional model files are each
+  ~260–480 lines and are heavily commented — start there, then read the matching adapter to see exactly which
+  groups are swept and over what ranges.</p>
+
+</div>
+</body>
+</html>
