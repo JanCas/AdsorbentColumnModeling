@@ -157,7 +157,7 @@ def desorption_loading_drained(t, y: State, args: ColumnParams, **kw):
 
 # --- solver ---
 
-# Spec sec.4.2 recommends Kvaerno5 (stiff implicit). In practice for v1 forward
+# Spec sec.5.4 recommends Kvaerno5 (stiff implicit). In practice for v1 forward
 # simulation, Tsit5 (explicit 5th order) is faster and far more reliable here:
 # Kvaerno5's implicit Newton on a 3N x 3N system with these dimensional scales
 # hit max_steps before breakthrough even with relaxed tolerances. The stiffness

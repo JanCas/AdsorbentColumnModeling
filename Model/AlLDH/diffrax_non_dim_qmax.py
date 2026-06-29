@@ -9,14 +9,25 @@ _log = logging.getLogger(__name__)
 # `run_cycle` below is @eqx.filter_jit; do NOT put _log calls inside its body.
 # Callers (multi_optim.py, Sensitivity/sobol_driver.py) handle runtime logging.
 
-N_SPATIAL = 20  # number of spatial grid points
+N_SPATIAL = 50  # number of spatial grid points (matches IX non-dim N=50
+                # default, so cross-model trapezoid/mean approximations
+                # carry the same discretization error budget)
 
 
 # ---------------------------------------------------------------------------
 # Isotherm
 # ---------------------------------------------------------------------------
+# q_max-normalised variant of Model/AlLDH/diffrax_non_dim.py.
+#
+# Loading normalisation:   n* = q / q_max   (was q / q_eq(c_feed) in the
+# feed-equilibrium-normalised sibling). The Langmuir isotherm
+#     q_eq = q_max · K c / (1 + K c)
+# under C* = c/c_feed and θ = K c_feed therefore reads
+#     n*_eq(C*) = θ C* / (1 + θ C*),     n*_eq ∈ [0, 1].
+# At feed (C*=1) n*_eq = θ/(1+θ), not 1 — the loading axis now measures
+# fraction of total Langmuir capacity occupied.
 def langmuir_isotherm_non_dim(C_star, theta):
-    return (1 + theta) * C_star / (1 + theta * C_star)
+    return theta * C_star / (1 + theta * C_star)
 
 
 # ---------------------------------------------------------------------------
@@ -31,17 +42,25 @@ class ColumnState(eqx.Module):
 # ---------------------------------------------------------------------------
 # Dimensionless numbers (physical parameters only)
 # ---------------------------------------------------------------------------
+# Time normalisation: τ = t · u_int / L  (INTERSTITIAL residence time, same
+# convention as Model/IX/NonDim/ix_nondim_qmax.py). Under this convention the
+# bed-porosity ε is absorbed into Λ and Da and does not appear explicitly
+# in the PDE:
+#   Λ  = (1−ε)/ε · ρ_p · q_max / c_feed   (loading scale is q_max here, NOT
+#                                          q_eq(c_feed); equals Λ_feed · (1+θ)/θ
+#                                          if you are converting from the
+#                                          feed-equilibrium-normalised model)
+#   Da = k · L / u_int                    (interstitial Damköhler, unchanged)
+#   θ  = K · c_feed                       (Langmuir feed favorability, unchanged)
 class NonDimNumbers(eqx.Module):
-    Da: Float[Array, ""]       # Damkoehler number  kn L / u
-    Lambda: Float[Array, ""]   # sorbent-to-fluid capacity ratio
+    Da: Float[Array, ""]       # interstitial Damkoehler  k L / u_int
+    Lambda: Float[Array, ""]   # sorbent-to-fluid capacity ratio (q_max basis)
     theta: Float[Array, ""]    # isotherm steepness
-    epsilon: Float[Array, ""]  # bed porosity
 
     def __post_init__(self):
         object.__setattr__(self, "Da", jnp.asarray(self.Da))
         object.__setattr__(self, "Lambda", jnp.asarray(self.Lambda))
         object.__setattr__(self, "theta", jnp.asarray(self.theta))
-        object.__setattr__(self, "epsilon", jnp.asarray(self.epsilon))
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +70,6 @@ class ColumnArgs(eqx.Module):
     Da: Float[Array, ""]
     Lambda: Float[Array, ""]
     theta: Float[Array, ""]
-    epsilon: Float[Array, ""]
     c_inlet: Float[Array, ""]   # 1.0 for adsorption, 0.0 for desorption
     dzeta: Float[Array, ""]     # spatial grid spacing
 
@@ -59,7 +77,7 @@ class ColumnArgs(eqx.Module):
     def from_non_dim(cls, nd: NonDimNumbers, c_inlet: float):
         return cls(
             Da=nd.Da, Lambda=nd.Lambda, theta=nd.theta,
-            epsilon=nd.epsilon, c_inlet=jnp.asarray(c_inlet),
+            c_inlet=jnp.asarray(c_inlet),
             dzeta=jnp.asarray(1.0 / (N_SPATIAL - 1)),
         )
 
@@ -67,6 +85,11 @@ class ColumnArgs(eqx.Module):
 # ---------------------------------------------------------------------------
 # ODE right-hand side  (standard LDF kinetics)
 # ---------------------------------------------------------------------------
+# Under interstitial-time normalisation the PDE is
+#   dC/dτ + Λ · dn/dτ = -dC/dζ            (no 1/ε prefactor anywhere)
+# mirroring Model/IX/NonDim/ix_nondim_qmax.py:vector_field exactly. Form is
+# identical to the feed-normalised sibling; only the isotherm numerator and
+# the q_max content of Λ differ.
 def column_ode(t, state: ColumnState, args: ColumnArgs):
     C = state.C_star
     n = state.n_star
@@ -76,7 +99,7 @@ def column_ode(t, state: ColumnState, args: ColumnArgs):
     dn_dt = args.Da * (n_eq - n)
 
     C_prev = jnp.roll(C, 1).at[0].set(args.c_inlet)
-    advection = (1.0 / args.epsilon) * (C - C_prev) / args.dzeta
+    advection = (C - C_prev) / args.dzeta
     dC_dt = -advection - args.Lambda * dn_dt
 
     return ColumnState(
@@ -97,9 +120,16 @@ def make_ads_event(c_thresh):
 
 
 def make_des_event(c_thresh):
-    """Stop desorption when mean bed loading drops below *c_thresh*."""
+    """Stop desorption when outlet concentration drops below *c_thresh*.
+
+    Switched from mean-loading to outlet-concentration semantics for
+    consistency with the IX non-dim model (Model/IX/NonDim/ix_nondim_qmax.py)
+    and to fix the "barely loaded → desorb runs to t_max" failure mode
+    observed in the IX sweep at Results/Sensitivity/IX/1.5_alldhlo (see
+    the event_reformulation_report.html there for the diagnosis).
+    """
     def _event(t, y: ColumnState, args, **kwargs):
-        return jnp.mean(y.n_star) <= c_thresh
+        return y.C_star[-1] <= c_thresh
     return _event
 
 
@@ -107,6 +137,10 @@ def make_des_event(c_thresh):
 # Shared solver settings
 # ---------------------------------------------------------------------------
 _SOLVER = diffrax.Tsit5()
+# Kvaerno5/Kvaerno3 were tried as a fix for the stiffness cliff at
+# log10(Λ·Da·θ) ≳ 4 but were unacceptably slow (5-10× Tsit5). Pragmatic fix:
+# trim the Sobol box via --log10-da-range to keep the stiff corner out.
+# See Model/IX/NonDim/ix_nondim_qmax.py for the same change rationale.
 _RTOL = 1e-3
 _ATOL = 1e-6
 _DT0 = 1e-4
@@ -142,7 +176,10 @@ def run_cycle(
     Parameters
     ----------
     non_dim : NonDimNumbers
-        Physical dimensionless groups (Da, Lambda, theta, epsilon).
+        Physical dimensionless groups (Da, Lambda, theta). Bed porosity ε
+        is absorbed into Λ via the interstitial-time normalisation; here
+        Λ uses q_max (not q_eq(c_feed)) as the loading scale. See the
+        NonDimNumbers docstring for the conversion.
     c_thresh_ads : float
         Outlet concentration threshold to end adsorption  (0 < . < 1).
     c_thresh_des : float
@@ -151,11 +188,18 @@ def run_cycle(
         drops below this value.
     Returns
     -------
-    tau_ads   - dimensionless adsorption time at cutoff
-    tau_des   - dimensionless desorption time at cutoff
-    U_b       - bed utilisation at end of adsorption
+    tau_ads      - dimensionless adsorption time at cutoff (interstitial τ)
+    tau_des      - dimensionless desorption time at cutoff (interstitial τ)
+    U_b          - bed utilisation at end of adsorption (fraction of q_max
+                   occupied; max attainable at feed equilibrium is θ/(1+θ))
     R_outlet_des - dimensionless Li collected at outlet during desorption ∫C*(ζ=1)dτ
-    productivity - R_outlet_des / (tau_ads + tau_des), Li recovered per unit cycle time
+    productivity - R_outlet_des / (tau_ads + tau_des)
+    R_release    - Li released from the adsorbed phase: Λ · (U_b − ⟨n⟩_des_end)
+    R_wash       - solution-phase wash mass: ⟨C⟩_load_end − ⟨C⟩_des_end
+                   By desorb-phase mass balance under interstitial-time
+                   normalisation, R_release + R_wash ≈ R_outlet_des (modulo
+                   solver tolerance + the max(0,·) clamps). Identical form
+                   to Model/IX/NonDim/ix_nondim_qmax.py:qois.
     """
     zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)
     # ---- Phase 1: Adsorption ------------------------------------------------
@@ -210,4 +254,16 @@ def run_cycle(
 
     productivity = R_outlet_des / (tau_ads + tau_des)
 
-    return tau_ads, tau_des, U_b, R_outlet_des, productivity
+    # Wash / release decomposition of R_outlet_des. Mass balance over the
+    # desorb phase (c_inlet = 0) under interstitial-time normalisation:
+    #   R_outlet_des = (⟨C⟩_load_end − ⟨C⟩_des_end) + Λ · (U_b − ⟨n⟩_des_end)
+    # Identical form to Model/IX/NonDim/ix_nondim_qmax.py:qois because both
+    # models now use the same τ convention (ε absorbed into Λ) and the same
+    # q_max loading basis.
+    n_des_end = jnp.trapezoid(des_final.n_star, zeta)[0]
+    C_load_end = jnp.trapezoid(ads_final.C_star, zeta)[0]
+    C_des_end  = jnp.trapezoid(des_final.C_star, zeta)[0]
+    R_release = non_dim.Lambda * jnp.maximum(U_b - n_des_end, 0.0)
+    R_wash    = jnp.maximum(C_load_end - C_des_end, 0.0)
+
+    return tau_ads, tau_des, U_b, R_outlet_des, productivity, R_release, R_wash
