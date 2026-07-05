@@ -1,9 +1,20 @@
-"""Verification suite for the IX column model.
+"""Verification suite for the DIMENSIONAL IX column model (ix_model.py).
 
-Implements spec sec.7 checks 7.1-7.5. Each verify_* function returns
-(passed: bool, detail: str). run_all() prints a one-line PASS/FAIL per check.
+Implements spec sec.7 checks 7.1-7.5 — physics/numerics sanity tests that a
+newcomer can run to trust the model:
+    7.1 isotherm        — n_eq reproduces the source Langmuir curve at pH 12
+    7.2 mass conservation — bed-inventory change == integrated net inlet flux
+                            (this exercises the +/- anti-symmetric coupling and
+                            the upwind direction; A+T being purely advected is
+                            the underlying invariant)
+    7.3 grid convergence — breakthrough time stabilizes as N is refined
+    7.4 event localization — the stop-event residual is ~0 at solve end
+    7.5 physics limits   — k=0 -> pure plug advection at u_s/eps; large k ->
+                            near-equilibrium; acidic feed on a loaded bed strips
 
-These exist outside ix_model.py so the core stays cheap to import.
+Each verify_* function returns (passed: bool, detail: str). run_all() prints a
+one-line PASS/FAIL per check. These live outside ix_model.py so the JAX core
+stays cheap to import (no numpy/verification pulled into optimizer/vmap paths).
 """
 
 from __future__ import annotations
@@ -80,6 +91,7 @@ _T_MAX = 3.0e3
 
 
 def _adsorption_phase(params: ColumnParams, save_n: int = 120) -> PhaseConfig:
+    """Build the loading PhaseConfig: alkaline Li+ brine feed, stops on breakthrough."""
     # Brine feed at pH 12:  T_L = [H+] - [OH-] ~ -1e-2 mol/L = -10 mol/m^3
     return PhaseConfig(
         name="adsorption",
@@ -94,6 +106,7 @@ def _adsorption_phase(params: ColumnParams, save_n: int = 120) -> PhaseConfig:
 
 
 def _desorption_phase(params: ColumnParams, save_n: int = 120) -> PhaseConfig:
+    """Build the stripping PhaseConfig: acidic eluent (A_in=0), stops when drained."""
     # Acidic eluent at pH 1:  T ~ +1e-1 mol/L = +100 mol/m^3
     return PhaseConfig(
         name="desorption",
@@ -175,7 +188,8 @@ def verify_mass_conservation() -> tuple[bool, str]:
     N = int(params.N)
     dx = L / N
 
-    # Bed inventory per unit cross-section [mol/m^2]
+    # Bed inventory of A per unit cross-section [mol/m^2]: fluid holdup (eps * A)
+    # plus solid holdup ((1-eps) * rho_p * n), summed over cells * dx.
     fluid_inv = eps * A_ts.sum(axis=1) * dx
     solid_inv = (1.0 - eps) * rho_p * n_ts.sum(axis=1) * dx
     bed_inv = fluid_inv + solid_inv
@@ -329,6 +343,11 @@ _CHECKS: list[tuple[str, Callable[[], tuple[bool, str]]]] = [
 
 
 def run_all() -> bool:
+    """Run every check in _CHECKS, printing a PASS/FAIL ledger; return overall ok.
+
+    Exceptions inside a check are caught and turned into a FAIL rather than
+    aborting the whole suite.
+    """
     _log.info("running %d verification checks ...", len(_CHECKS))
     all_ok = True
     results: list[tuple[str, bool, str, float]] = []

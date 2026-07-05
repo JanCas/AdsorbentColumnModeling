@@ -135,6 +135,15 @@ def _build(
     bounds_mode: Literal["ix", "alldh", "alldh_lowda"] = "ix",
     t_max_mult: float = 1.0,
 ) -> SobolModel:
+    """Assemble the IX SobolModel for one scope + bounds preset.
+
+    `scope` selects the sampled axes: "screen" sweeps the 4 core groups
+    (Λ, Da, K*, C_thresh_ads) with the pH/threshold axes held at nominal
+    values; "full" adds the 3 desorption/pH axes (H_in_des, buffer B,
+    C_thresh_des). `bounds_mode` selects the sampling box (native IX band vs.
+    AlLDH-matched endpoints). `t_max_mult` optionally stretches the per-phase
+    integration horizons.
+    """
     _log.debug("building IX non-dim Sobol adapter (q_max, scope=%s, bounds=%s, "
                "t_max_mult=%g)", scope, bounds_mode, t_max_mult)
 
@@ -169,9 +178,17 @@ def _build(
     _phase_cache: list = []
 
     def run(vec):
+        """Map one Sobol sample row -> IX non-dim cycle -> QoI dict.
+
+        Unpacks the sample into the dimensionless groups (Λ, Da, K*, plus the
+        pH/threshold axes in `full` scope), builds `NonDimParams`, runs one
+        load->desorb cycle via `qois`, and returns the metrics in `outputs`.
+        """
         import jax.numpy as jnp
         from ix_nondim_qmax import NonDimParams, default_params, qois
 
+        # Named lookup (order-independent) into the sample row. log-space axes
+        # are exponentiated back to physical groups.
         values = dict(zip(names, vec))
         Lambda       = 10.0 ** values["log10_Lambda"]
         Da           = 10.0 ** values["log10_Da"]
@@ -180,6 +197,8 @@ def _build(
         # ω is fixed (water floor); the sampled buffer B = ω/H_in_ads sets the
         # feed basicity, and H_in_ads is derived from it.
         omega        = _OMEGA_REF
+        # In "screen" scope the desorption/pH axes aren't sampled — hold them at
+        # nominal so the 4 core axes carry all the variance.
         if scope == "full":
             H_in_des     = 10.0 ** values["log10_H_in_des"]
             buffer       = 10.0 ** values["log10_buffer"]
@@ -188,14 +207,19 @@ def _build(
             H_in_des     = _H_IN_DES_NOMINAL
             buffer       = _BUFFER_NOMINAL
             C_thresh_des = _C_THRESH_DES_NOMINAL
+        # Derive the feed inlet proton level from the sampled buffer ratio.
         H_in_ads = omega / buffer      # B = ω/H_in_ads  ->  H_in_ads = ω/B
+        # Keep the desorption cutoff strictly below the adsorption cutoff.
         C_thresh_des = min(C_thresh_des, 0.99 * C_thresh_ads)
 
+        # Pack the groups into the model's parameter container.
         nd = default_params(
             Lambda=Lambda, Da=Da, K_star=K_star,
             omega=omega, H_in_des=H_in_des, H_in_ads=H_in_ads,
             C_thresh_ads=C_thresh_ads, C_thresh_des=C_thresh_des,
         )
+        # Non-default integration horizons: build (and cache) stretched load/des
+        # PhaseConfigs once, then reuse them for every sample in this sweep.
         if t_max_mult != 1.0:
             if not _phase_cache:
                 from ix_nondim_qmax import (
@@ -212,6 +236,7 @@ def _build(
                            des_phase=_phase_cache[1])
         else:
             metrics = qois(nd)
+        # Copy through every QoI the model returns (as Python floats).
         result = {key: float(metrics[key]) for key in _OUTPUTS if key in metrics}
         # Derived wash/release ratio (not in metrics dict). Floor denominator
         # so the metric stays finite when the bed never loaded.
@@ -221,6 +246,7 @@ def _build(
         return result
 
     def postfix(vec, result):
+        """Build the live tqdm postfix (current groups + productivity)."""
         values = dict(zip(names, vec))
         fields = {
             "Λ":     f"{10**values['log10_Lambda']:.2g}",
@@ -255,6 +281,7 @@ def get_screen_model(
     bounds: Literal["ix", "alldh", "alldh_lowda"] = "ix",
     t_max_mult: float = 1.0,
 ) -> SobolModel:
+    """Screen-scope IX adapter: 4 core axes (Λ, Da, K*, C_thresh_ads)."""
     return _build("screen", bounds, t_max_mult)
 
 
@@ -262,8 +289,10 @@ def get_full_model(
     bounds: Literal["ix", "alldh", "alldh_lowda"] = "ix",
     t_max_mult: float = 1.0,
 ) -> SobolModel:
+    """Full-scope IX adapter: core axes plus H_in_des, buffer B, C_thresh_des."""
     return _build("full", bounds, t_max_mult)
 
 
 def get_model() -> SobolModel:
+    """Default IX adapter used by the joint runner (full scope, IX bounds)."""
     return get_full_model()

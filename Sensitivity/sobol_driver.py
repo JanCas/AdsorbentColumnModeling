@@ -62,6 +62,11 @@ class SobolModel:
 # ---------------------------------------------------------------------------
 
 def _build_sobol_df(Si, names: list[str]) -> pd.DataFrame:
+    """Tidy the SALib analysis result `Si` into a per-parameter DataFrame.
+
+    One row per input parameter, carrying the first-order (S1) and total-order
+    (ST) Sobol indices plus their bootstrap confidence half-widths (`*_conf`).
+    """
     return pd.DataFrame({
         "param":   names,
         "S1":      Si["S1"],
@@ -72,6 +77,12 @@ def _build_sobol_df(Si, names: list[str]) -> pd.DataFrame:
 
 
 def _plot_sobol_indices(df: pd.DataFrame, filename: Path, title: str) -> None:
+    """Draw the standard two-panel Sobol bar chart for one output metric.
+
+    Left panel = first-order S1 (variance explained by each input alone),
+    right panel = total-order ST (input plus all its interactions). Error bars
+    are the SALib confidence half-widths. Saved as both PNG and SVG.
+    """
     x = np.arange(len(df))
     fig, axes = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
 
@@ -321,6 +332,9 @@ def run_sobol(
     out_dir.mkdir(parents=True, exist_ok=True)
     _log.info("[%s] output dir = %s", model.tag, out_dir)
 
+    # SALib "problem" definition: the parameter space to sweep. Names, bounds
+    # (lo, hi) and per-parameter distributions come straight from the adapter,
+    # so the driver never hard-codes anything model-specific.
     problem = {
         "num_vars": len(model.names),
         "names":    list(model.names),
@@ -330,6 +344,9 @@ def run_sobol(
     _log.info("[%s] problem: %d vars %s; bounds=%s",
               model.tag, problem["num_vars"], problem["names"], problem["bounds"])
 
+    # Draw the Saltelli/Sobol sample matrix. Shape is (n_evals, num_vars):
+    # one row per model evaluation, one column per input. The row count is
+    # N*(2*num_vars+2) with second-order indices, else N*(num_vars+2).
     _log.info("[%s] generating Sobol samples (N=%d, calc_second_order=%s) ...",
               model.tag, N, calc_second_order)
     param_values = sobol_sample.sample(
@@ -338,15 +355,23 @@ def run_sobol(
     n_evals = param_values.shape[0]
     _log.info("[%s] total evaluations: %d", model.tag, n_evals)
 
+    # One output vector per QoI, pre-filled with NaN. A NaN survives wherever a
+    # sample fails, and SALib/our variance guard skip those downstream.
     output_arrays = {key: np.full(n_evals, np.nan) for key in model.outputs}
     failures = 0
     t_loop_start = time.perf_counter()
 
+    # Serial evaluation loop: run the forward model once per sample row.
+    # (No vmap here — each adapter.run() drives a diffrax integration whose
+    # step count depends on the sample, so runs are evaluated one at a time.)
     with tqdm.tqdm(total=n_evals, desc=f"[{model.tag}] eval", unit="eval") as pbar:
         for i, vec in enumerate(param_values):
             try:
+                # Adapter maps this sample row -> {output_key: value} QoI dict.
                 result = model.run(vec)
             except Exception:
+                # A single bad evaluation (solver blow-up, NaN, etc.) is logged
+                # with its parameter vector and skipped, leaving NaN in row i.
                 failures += 1
                 _log.exception(
                     "[%s] sample %d/%d failed; params=%s",
@@ -369,12 +394,17 @@ def run_sobol(
                      "contain NaN", model.tag, failures, n_evals,
                      100.0 * failures / n_evals)
 
+    # Analyse each QoI independently: SALib decomposes its variance over the
+    # sampled input box into per-input first-order (S1) and total-order (ST)
+    # contributions (plus pairwise S2 if requested).
     for key, title in model.outputs.items():
         values = output_arrays[key]
         finite = values[np.isfinite(values)]
         if finite.size == 0:
             _log.error("[%s] %s: all values non-finite, skipping.", model.tag, key)
             continue
+        # A constant output has zero variance to decompose — Sobol is undefined,
+        # so skip it rather than feed SALib a degenerate column.
         if np.ptp(finite) < 1e-15:
             _log.warning("[%s] %s: no variance, skipping Sobol analysis.",
                          model.tag, key)
@@ -406,6 +436,9 @@ def run_sobol(
                 _log.exception("[%s] S2 diagnostic failed for %s",
                                model.tag, key)
 
+    # Persist the raw sample -> QoI table (one row per evaluation): input
+    # columns first, then every output column. This is the source data the
+    # scatter "DataPlots" are drawn from.
     _log.info("[%s] saving raw samples to %s",
               model.tag, out_dir / "sobol_cycle_samples.csv")
     sample_columns = {

@@ -1,4 +1,9 @@
-"""Runnable demo for the IX column model.
+"""Runnable demo for the DIMENSIONAL IX column model.
+
+End-to-end example a newcomer can run: builds ColumnParams + a two-phase
+adsorption->desorption cycle, calls run_cycle, renders the three plots
+(breakthrough, spatial profiles, eluate), and then runs the sec.7 verification
+suite. Serves as the reference for how the pieces in this folder fit together.
 
 Wires Model/IX/{ix_model, plotting, verification} into a load -> desorb cycle
 and runs the sec.7 verification suite. Run with:
@@ -36,6 +41,10 @@ _log = logging.getLogger(__name__)
 
 
 def _demo_params(N: int = 40) -> ColumnParams:
+    """Physics params for the demo: 5 mm pilot column, Li+ brine, Da ~ 1 kinetics.
+
+    A_in/T_in are placeholders here — each phase overrides them (see _demo_phases).
+    """
     return ColumnParams(
         L=5e-3, eps=0.4, rho_p=1000.0, u_s=1e-3,
         Q_sites=3.98, Kstar=1.09e-9, k=5e-1, Kw=K_W_SI,
@@ -46,6 +55,7 @@ def _demo_params(N: int = 40) -> ColumnParams:
 
 
 def _demo_phases() -> list[PhaseConfig]:
+    """The two-phase cycle: alkaline Li+ brine load, then acidic strip."""
     # Adsorption: t_break ~ 250 s at N=40 (front limited by Da ~ 1).
     # Desorption: drains in ~10-20 s once the acidic eluent reaches the bed.
     # Per-phase save grids keep both curves well-resolved near their event.
@@ -70,9 +80,10 @@ def _demo_phases() -> list[PhaseConfig]:
 
 
 def main() -> None:
+    """Run the load->desorb cycle, draw the plots, run verification, then show()."""
     configure_logging()
     _log.info("IX demo starting")
-    apply_style()
+    apply_style()  # install JansPlottingStuff styling before any plotting
 
     params = _demo_params()
     phases = _demo_phases()
@@ -83,6 +94,7 @@ def main() -> None:
         float(params.k), int(params.N),
         float(params.eta_min), float(params.n_residual),
     )
+    # Empty bed (A=n=0) pre-equilibrated to the feed proton level (T0 = feed T_in).
     y0 = initial_state(int(params.N), A0=0.0, T0=float(phases[0].T_in), n0=0.0)
 
     sols, t_offsets = run_cycle(y0, phases, params)

@@ -1,3 +1,28 @@
+"""Parameter dataclasses describing an experimental adsorption study.
+
+This is the shared "input side" of the modeling framework. It parses raw
+literature/experimental data (loaded from JSON) into typed, immutable
+dataclasses and exposes:
+
+* unit-aware ``*_si`` accessors that convert every stored quantity into SI
+  units (m, s, mol/m^3, mol/kg, kg/m^3, K) so the physics code never has to
+  worry about the units a given source reported;
+* derived engineering quantities for a packed bed — velocities, Reynolds /
+  Peclet / Schmidt / Sherwood numbers, axial dispersion, mass-transfer
+  coefficients — computed from a ``Study``;
+* ``ColumnParameters``, an Equinox module of JAX arrays that packages the
+  handful of parameters the dimensional AlLDH forward model actually needs.
+
+The top-level object is ``Study`` (built via ``Study.from_json``); it aggregates
+column geometry, sorbent properties, an equilibrium isotherm fit, and
+pseudo-second-order kinetics experiments. See PROJECT_GUIDE.html sections 4.1
+(dimensional AlLDH parameter table) and 2/3 (physical system) for the meaning of
+these quantities.
+
+Convention: fields hold values in the units the source reported (with a paired
+``*_units`` string); the matching ``*_si`` property performs the conversion.
+"""
+
 from dataclasses import dataclass, asdict, field
 import numpy as np
 from typing import ClassVar
@@ -11,9 +36,11 @@ from pyEQL import Solution
 import equinox as eqx
 import jax.numpy as jnp
 
-Li_MW = 6.94  # g/mol
+Li_MW = 6.94  # molar mass of lithium [g/mol]; used for mg<->mol conversions
+# Infinite-dilution-style diffusion coefficient of Li+ in water at temperature T [K]
+# and concentration c [mol/m^3], via pyEQL. Returns D in m^2/s.
 D_Li_in_H2O = lambda T,c: Solution({"Li+": f"{c} mol/m^3"}, temperature=f'{T}K').get_diffusion_coefficient("Li+").magnitude  # m²/s
-ideal_gas_constant = 8.314  # J/(mol·K)
+ideal_gas_constant = 8.314  # universal gas constant R [J/(mol·K)]
 
 def convert_mg_per_L_to_mol_per_m3(concentration_mg_per_L: float | np.ndarray) -> float | np.ndarray:
     "Converts concentration from mg/L to mol/m³."
@@ -26,10 +53,15 @@ def convert_mg_per_g_to_mol_per_kg(q_mg_per_g: float | np.ndarray) -> float | np
 
 @dataclass(frozen=True)
 class PseudoSecondOrderKineticsParameters:
-    k2: float
-    q_e: float
-    k2_units: str
-    q_e_units: str
+    """Fitted pseudo-second-order (PSO) uptake kinetics for one batch experiment.
+
+    PSO law: dq/dt = k2 (q_e - q)^2. Provides SI accessors so the column model
+    can use k2 in mol/kg/s and q_e in mol/kg regardless of the reported units.
+    """
+    k2: float          # PSO rate constant (units given by k2_units)
+    q_e: float         # fitted equilibrium solid loading (units given by q_e_units)
+    k2_units: str      # e.g. "mol/kg/s" or "g/mg/min"
+    q_e_units: str     # e.g. "mol/kg" or "mg/g"
 
     @property
     def k2_si(self) -> float:
@@ -68,10 +100,11 @@ class PseudoSecondOrderKineticsParameters:
 
 @dataclass(frozen=True)
 class KineticsUnits:
-    time: str
-    q_t: str
-    T: str
-    C_e: str
+    """Units declared for a batch-kinetics dataset (parsed alongside the data)."""
+    time: str    # units of the time series, e.g. "min" or "s"
+    q_t: str     # units of solid loading q(t), e.g. "mg/g" or "mol/kg"
+    T: str       # units of temperature, e.g. "K"
+    C_e: str     # units of equilibrium liquid conc., e.g. "mg/L" or "mol/m3"
 
     @classmethod
     def from_dict(cls, data: dict) -> "KineticsUnits":
@@ -84,13 +117,14 @@ class KineticsUnits:
 
 @dataclass(frozen=True)
 class KineticsExperiment:
-    T: float
-    C_e: float
-    Ph: float
-    time: list[float]
-    q_t: list[float]
-    kinetics_params: PseudoSecondOrderKineticsParameters
-    kinetics_units: KineticsUnits
+    """One batch-uptake experiment: a q(t) curve at fixed T, pH and C_e, plus its PSO fit."""
+    T: float                                              # temperature [K]
+    C_e: float                                            # equilibrium liquid concentration (units in kinetics_units)
+    Ph: float                                             # solution pH [-]
+    time: list[float]                                     # time samples (units in kinetics_units)
+    q_t: list[float]                                      # measured solid loading at each time (units in kinetics_units)
+    kinetics_params: PseudoSecondOrderKineticsParameters  # fitted PSO rate constant / equilibrium loading
+    kinetics_units: KineticsUnits                         # units metadata for the fields above
 
     @property
     def time_si(self) -> np.ndarray:
@@ -141,11 +175,12 @@ class KineticsExperiment:
 
 @dataclass(frozen=True)
 class ColumnProperties:
-    Length: float
-    Length_units: str
-    Diameter: float
-    Diameter_units: str
-    porosity: float
+    """Geometry and packing of the physical column (bed dimensions + void fraction)."""
+    Length: float          # packed-bed length (units in Length_units)
+    Length_units: str      # e.g. "m"
+    Diameter: float        # internal column diameter (units in Diameter_units)
+    Diameter_units: str    # e.g. "m"
+    porosity: float        # bed void fraction epsilon [-] (fraction of volume that is liquid)
 
     @property
     def tortuosity(self) -> float:
@@ -193,9 +228,10 @@ class ColumnProperties:
 
 @dataclass(frozen=True)
 class BreakthroughCurveUnits:
-    flowrate: str
-    influent_concentration: str
-    T: str
+    """Units declared for a set of column breakthrough curves."""
+    flowrate: str                 # e.g. "BV/h" (bed volumes per hour) or "m3/s"
+    influent_concentration: str   # e.g. "mg/L" or "mol/m3"
+    T: str                        # e.g. "K"
 
     @classmethod
     def from_dict(cls, data: dict) -> "BreakthroughCurveUnits":
@@ -207,13 +243,14 @@ class BreakthroughCurveUnits:
 
 @dataclass(frozen=True)
 class BreakthroughCurve:
-    flowrate: int
-    T: float
-    PH: float
-    influent_concentration: float
-    BV: list[float]
-    C_out_over_C_in: list[float]
-    uuid: uuid.UUID = field(default_factory=uuid.uuid4)
+    """A single measured column breakthrough curve (outlet/inlet vs bed volumes)."""
+    flowrate: int                    # feed flowrate at this operating point (units in BreakthroughCurveUnits)
+    T: float                         # temperature [K]
+    PH: float                        # feed pH [-]
+    influent_concentration: float    # feed (inlet) concentration C_in (units in BreakthroughCurveUnits)
+    BV: list[float]                  # x-axis: cumulative bed volumes processed [-]
+    C_out_over_C_in: list[float]     # y-axis: normalized outlet concentration C_out/C_in in [0,1]
+    uuid: uuid.UUID = field(default_factory=uuid.uuid4)  # stable id for this curve (matching/filtering)
 
     @property
     def run_length_hours(self) -> float:
@@ -234,8 +271,9 @@ class BreakthroughCurve:
     
 @dataclass(frozen=True)
 class BreakthroughCurves:
-    curves: tuple[BreakthroughCurve, ...]
-    units: BreakthroughCurveUnits
+    """A collection of breakthrough curves sharing one set of units, with filtering."""
+    curves: tuple[BreakthroughCurve, ...]   # all measured curves in the study
+    units: BreakthroughCurveUnits           # units shared by every curve
 
     def filter(self, **filter) -> tuple[BreakthroughCurve, ...]:
         if not filter:
@@ -261,8 +299,13 @@ class BreakthroughCurves:
 
 @dataclass(frozen=True)
 class ColumnExperiments:
-    column_properties: ColumnProperties
-    breakthrough_curves: BreakthroughCurves
+    """Column geometry paired with its breakthrough curves.
+
+    Provides SI conversions and derived hydrodynamics (superficial/interstitial
+    velocity) for any curve or subset selected by ``**filter``.
+    """
+    column_properties: ColumnProperties       # bed geometry + porosity
+    breakthrough_curves: BreakthroughCurves    # measured curves for this column
 
     def superficial_flowrate_si(self, curve: BreakthroughCurve=None, **filter) -> float:
         "Converts the flowrate to m3/s depending on the units specified."
@@ -309,10 +352,11 @@ class ColumnExperiments:
     
 @dataclass(frozen=True)
 class SorbentProperties:
-    density: float
-    density_units: str
-    particle_diameter: float
-    particle_diameter_units: str
+    """Physical properties of the packed sorbent grains."""
+    density: float                  # particle (grain) density rho_p (units in density_units)
+    density_units: str              # e.g. "kg/m3"
+    particle_diameter: float        # sorbent particle diameter d_p (units in particle_diameter_units)
+    particle_diameter_units: str    # e.g. "m"
 
     @property
     def density_si(self) -> float:
@@ -344,9 +388,14 @@ class SorbentProperties:
 class BaseIsothermFit(eqx.Module):
     """
     Abstract base class for isotherm fit models.
+
+    An isotherm maps liquid concentration C to the equilibrium solid loading
+    q_eq(C). Subclasses (Temkin, Sips) implement ``q_eq_si`` in SI units and are
+    passed to the column model as a callable isotherm. Subclasses are Equinox
+    modules so they can live inside a JAX pytree.
     """
 
-    fit_type: ClassVar[str]
+    fit_type: ClassVar[str]   # short string tag identifying the isotherm family
 
     @classmethod
     @abstractmethod
@@ -362,13 +411,19 @@ class BaseIsothermFit(eqx.Module):
 
 
 class ColumnParameters(eqx.Module):
-    u_inter: jnp.ndarray
-    k_s: jnp.ndarray
-    epsilon: jnp.ndarray
-    C_in: jnp.ndarray
-    L: jnp.ndarray
-    rho_p: jnp.ndarray
-    isotherm: BaseIsothermFit
+    """JAX-array parameter bundle consumed by the dimensional AlLDH column model.
+
+    This is exactly the parameter set in PROJECT_GUIDE §4.1: the leaves are JAX
+    arrays so the forward model can be JIT-compiled once and reused across
+    parameter values, and ``isotherm`` is a callable pytree leaf.
+    """
+    u_inter: jnp.ndarray        # interstitial (pore) velocity u_int = u_super/epsilon [m/s]
+    k_s: jnp.ndarray            # PSO kinetic rate constant k_s [1/s]
+    epsilon: jnp.ndarray        # bed porosity [-]
+    C_in: jnp.ndarray           # feed concentration [mol/m^3]
+    L: jnp.ndarray              # column length [m]
+    rho_p: jnp.ndarray          # particle density [kg/m^3]
+    isotherm: BaseIsothermFit   # equilibrium isotherm callable C -> q_eq [mol/kg]
 
     def __post_init__(self):
         # Keep numeric leaves as JAX arrays so JIT can reuse one compiled executable
@@ -389,12 +444,13 @@ class ColumnParameters(eqx.Module):
         )
 
 class SipsIsothermFit(BaseIsothermFit):
+    """Sips (Langmuir-Freundlich) isotherm: q_eq = Q_max (K_s C)^n / (1 + (K_s C)^n)."""
     fit_type: ClassVar[str] = "Sips"
-    K_s: float
-    n: float
-    Q_max: float
-    K_s_units: str
-    Q_max_units: str
+    K_s: float          # Sips affinity constant (units in K_s_units)
+    n: float            # Sips heterogeneity exponent [-]
+    Q_max: float        # saturation capacity (units in Q_max_units)
+    K_s_units: str      # e.g. "L/mg" or "m3/mol"
+    Q_max_units: str    # e.g. "mg/g" or "mol/kg"
 
     def __post_init__(self):
         Warning.warn("Sips Isotherm model is not yet implemented.")
@@ -435,12 +491,13 @@ class SipsIsothermFit(BaseIsothermFit):
         return q_e
 
 class TemkinIsothermFit(BaseIsothermFit):
+    """Temkin isotherm: q_eq = (RT/B) ln(A C), floored at 0 (used as the AlLDH isotherm)."""
     fit_type: ClassVar[str] = "Temkin"
-    A: float
-    B: float
-    A_units: str
-    B_units: str
-    T: float
+    A: float          # Temkin equilibrium binding constant (units in A_units)
+    B: float          # Temkin energy parameter (units in B_units); related to heat of sorption
+    A_units: str      # e.g. "L/mg" or "m3/mol"
+    B_units: str      # e.g. "kJ/mol" or "J/mol"
+    T: float          # temperature at which the fit applies [K]
 
     @property
     def A_si(self) -> float:
@@ -499,16 +556,18 @@ class TemkinIsothermFit(BaseIsothermFit):
         )
 
 
+# Registry mapping a fit_type tag (as stored in JSON) to its isotherm class.
 IsothermFitDirectory = {
     TemkinIsothermFit.fit_type: TemkinIsothermFit,
     SipsIsothermFit.fit_type: SipsIsothermFit
-}  
+}
 
 @dataclass(frozen=True)
 class IsothermUnits:
-    C_e: str
-    q_e: str
-    T: str
+    """Units declared for an equilibrium isotherm dataset."""
+    C_e: str    # units of equilibrium liquid concentration, e.g. "mg/L" or "mol/m3"
+    q_e: str    # units of equilibrium solid loading, e.g. "mg/g" or "mol/kg"
+    T: str      # units of temperature, e.g. "K"
 
     @classmethod
     def from_dict(cls, data: dict) -> "IsothermUnits":
@@ -520,15 +579,16 @@ class IsothermUnits:
 
 @dataclass(frozen=True)
 class Isotherm:
-    isotherm_fit: BaseIsothermFit
-    T: float
-    Ph: float
-    equilibrium_concentration_units: str
-    equilibrium_concentration: list[float]
-    fit_type: str
-    equilibrium_uptake: list[float]
-    equilibrium_uptake_units: str
-    units: IsothermUnits
+    """Measured equilibrium isotherm (q_e vs C_e) plus the fitted model for it."""
+    isotherm_fit: BaseIsothermFit            # fitted callable isotherm (Temkin/Sips)
+    T: float                                 # temperature of the isotherm [K]
+    Ph: float                                # pH of the isotherm measurements [-]
+    equilibrium_concentration_units: str     # units of the C_e list, e.g. "mg/L"
+    equilibrium_concentration: list[float]   # measured equilibrium liquid concentrations C_e
+    fit_type: str                            # which model was fit ("Temkin"/"Sips")
+    equilibrium_uptake: list[float]          # measured equilibrium solid loadings q_e
+    equilibrium_uptake_units: str            # units of the q_e list, e.g. "mg/g"
+    units: IsothermUnits                     # units metadata bundle
 
     @property
     def equilibrium_concentration_si(self) -> np.ndarray:
@@ -577,10 +637,20 @@ class Isotherm:
 
 @dataclass(frozen=True)
 class Study:
-    column_experiments: ColumnExperiments
-    sorbent_properties: SorbentProperties
-    isotherm: Isotherm
-    kinetics_experiments: list[KineticsExperiment]
+    """Top-level container for one adsorbent study loaded from JSON.
+
+    Aggregates everything needed to parameterize and characterize a column:
+    geometry + breakthrough curves, sorbent properties, the equilibrium
+    isotherm, and batch kinetics experiments. Beyond storage it computes the
+    engineering diagnostics (Reynolds/Peclet/Schmidt/Sherwood numbers, axial
+    dispersion, mass-transfer coefficient, capacity factor & Damkohler number)
+    and produces the JAX ``ColumnParameters`` the forward model runs on.
+    Build via ``Study.from_json``.
+    """
+    column_experiments: ColumnExperiments             # geometry + breakthrough curves
+    sorbent_properties: SorbentProperties             # grain density, particle diameter
+    isotherm: Isotherm                                # equilibrium isotherm + fit
+    kinetics_experiments: list[KineticsExperiment]    # batch PSO kinetics at various conditions
 
     def get_kinetics_experiment_from_curve(self, curve: BreakthroughCurve) -> KineticsExperiment:
         "Returns the kinetics experiment that matches the temperature and pH of the given breakthrough curve."
@@ -728,6 +798,13 @@ class Study:
         return capacity_factors, damkohler_numbers
     
     def to_column_parameter(self, L, C_in, u_super) -> ColumnParameters:
+        """Assemble the JAX ``ColumnParameters`` for the dimensional AlLDH model.
+
+        Given a design (length L [m], feed concentration C_in [mol/m^3],
+        superficial velocity u_super [m/s]) it converts to interstitial velocity,
+        picks the kinetics experiment nearest to C_in for k_s, and pulls porosity,
+        particle density and the isotherm from this study.
+        """
         # u_inter = 4 * Q / (np.pi * D**2) /self.column_experiments.column_properties.porosity
         u_inter = u_super / self.column_experiments.column_properties.porosity
 

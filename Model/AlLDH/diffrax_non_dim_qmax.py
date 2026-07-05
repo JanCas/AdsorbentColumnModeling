@@ -1,3 +1,31 @@
+"""Non-dimensional 1-D packed-bed AlLDH model (q_max loading basis).
+
+This is the mechanism-agnostic form of the dimensional model in
+``diffrax_column_model.py``, used to drive the Sobol global-sensitivity sweeps
+(``Sensitivity/sobol_driver.py``). Scaling C* = C/c_feed, n* = q/q_max,
+ζ = x/L and time by the interstitial residence time τ = t·u_int/L collapses all
+the SI knobs into three dimensionless groups, so the porosity ε never appears
+explicitly (it is absorbed into Λ):
+
+    dC*/dτ = -dC*/dζ - Λ·dn*/dτ
+    dn*/dτ = Da·(n*_eq(C*) - n*)          (linear LDF; contrast the PSO used in
+                                           the dimensional AlLDH model)
+    n*_eq(C*) = θ·C* / (1 + θ·C*)
+
+    Λ  = (1-ε)/ε · ρ_p · q_max/c_feed   capacity ratio (how "deep" the bed is)
+    Da = k·L/u_int                       Damköhler (kinetics vs. residence time)
+    θ  = K·c_feed                        Langmuir feed favorability
+
+Advection is first-order upwind with a ghost-cell Dirichlet inlet (C*=1 loading,
+C*=0 stripping) and free outflow, identical in structure to the IX non-dim model
+(``Model/IX/NonDim/ix_nondim_qmax.py``), which shares the same τ convention and
+q_max basis so their Sobol indices are directly comparable.
+
+Public entry point: ``run_cycle`` solves an adsorption+desorption cycle and
+returns the QoIs (cutoff times, bed utilisation, recovered Li, productivity,
+release/wash split). It is ``@eqx.filter_jit``-compiled and vmapped by the Sobol
+harness over the sampled (Da, Λ, θ) box.
+"""
 import logging
 
 import diffrax
@@ -153,6 +181,9 @@ _CONTROLLER = diffrax.PIDController(
 
 
 def ads_state(c_threshold_des):
+    """Initial adsorption state: empty liquid (C*=0), a uniform residual loading
+    equal to the desorption cutoff (n* = c_threshold_des, what the previous strip
+    left behind), and a zeroed outlet accumulator."""
     return ColumnState(
         C_star=jnp.zeros(N_SPATIAL),
         n_star=jnp.full(N_SPATIAL, c_threshold_des),
@@ -201,8 +232,8 @@ def run_cycle(
                    solver tolerance + the max(0,·) clamps). Identical form
                    to Model/IX/NonDim/ix_nondim_qmax.py:qois.
     """
-    zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)
-    # ---- Phase 1: Adsorption ------------------------------------------------
+    zeta = jnp.linspace(0.0, 1.0, N_SPATIAL)  # dimensionless axial grid ζ∈[0,1]
+    # ---- Phase 1: Adsorption (inlet C*=1, stop at outlet breakthrough) -------
     ads_args = ColumnArgs.from_non_dim(non_dim, c_inlet=1.0)
     ads_sol = diffrax.diffeqsolve(
         diffrax.ODETerm(column_ode),
@@ -224,6 +255,8 @@ def run_cycle(
     # Bed utilisation
     U_b = jnp.trapezoid(ads_final.n_star, zeta)[0]
     # ---- Phase 2: Desorption ------------------------------------------------
+    # Same ODE, inlet switched to C*=0 (strip fluid); initialise from the loaded
+    # end-of-adsorption profiles ([-1] = final saved sample) and reset R_outlet.
     des_args = ColumnArgs.from_non_dim(non_dim, c_inlet=0.0)
     des_y0 = ColumnState(
         C_star=ads_final.C_star[-1],

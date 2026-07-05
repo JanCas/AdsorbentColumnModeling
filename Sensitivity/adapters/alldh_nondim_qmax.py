@@ -99,6 +99,12 @@ _BoundsMode = Literal["legacy", "alldh_log", "ix", "ix_linear"]
 
 
 def _build(bounds_mode: _BoundsMode = "legacy") -> SobolModel:
+    """Assemble the AlLDH SobolModel for one bounds preset.
+
+    Each preset picks a (names, bounds, pretty-labels) triple and a filename
+    tag. Presets differ only in the sampling box and whether the Λ/Da/θ axes
+    are sampled in linear or log10 space — the forward model is the same.
+    """
     _log.debug("building AlLDH non-dim Sobol adapter (q_max, bounds=%s)",
                bounds_mode)
 
@@ -129,9 +135,17 @@ def _build(bounds_mode: _BoundsMode = "legacy") -> SobolModel:
         )
 
     def run(vec):
+        """Map one Sobol sample row -> AlLDH non-dim cycle -> QoI dict.
+
+        Unpacks the sample into the dimensionless groups (Λ, Da, θ) and the two
+        breakthrough thresholds, runs one load->desorb cycle, and returns the
+        metrics named in `outputs`.
+        """
         import jax.numpy as jnp
         from diffrax_non_dim_qmax import NonDimNumbers, run_cycle  # q_max basis
 
+        # Sample columns are in the fixed order set by `names`. Log-space presets
+        # carry log10 values, so exponentiate them back to physical Λ, Da, θ.
         if bounds_mode in ("ix", "alldh_log"):
             log10_Lambda, log10_Da, log10_theta, c_th_ads, c_th_des = vec
             Lambda = 10.0 ** log10_Lambda
@@ -140,8 +154,11 @@ def _build(bounds_mode: _BoundsMode = "legacy") -> SobolModel:
         else:
             Lambda, Da, theta, c_th_ads, c_th_des = vec
 
+        # Guard: desorption cutoff must sit below the adsorption cutoff, else the
+        # phase-end events are ill-ordered. Sampled independently, so clamp here.
         c_th_des = min(c_th_des, 0.99 * c_th_ads)
 
+        # Forward model: one full adsorption + desorption cycle in JAX/diffrax.
         (tau_ads, tau_des, U_b, R_outlet_des, productivity,
          R_release, R_wash) = run_cycle(
             non_dim=NonDimNumbers(
@@ -150,6 +167,9 @@ def _build(bounds_mode: _BoundsMode = "legacy") -> SobolModel:
             c_thresh_ads=jnp.asarray(c_th_ads),
             c_thresh_des=jnp.asarray(c_th_des),
         )
+        # Cast JAX scalars to Python floats for the driver's NumPy output arrays.
+        # R_wash_over_R_release is derived here (not returned by run_cycle),
+        # flooring the denominator so it stays finite when the bed never loaded.
         r_release_f = float(R_release)
         r_wash_f    = float(R_wash)
         return {
@@ -164,6 +184,7 @@ def _build(bounds_mode: _BoundsMode = "legacy") -> SobolModel:
         }
 
     def postfix(vec, result):
+        """Build the live tqdm postfix (current Λ/Da/θ/thresholds and U_b)."""
         if bounds_mode in ("ix", "alldh_log"):
             log10_Lambda, log10_Da, log10_theta, c_th_ads, c_th_des = vec
             Lambda = 10.0 ** log10_Lambda
@@ -213,4 +234,5 @@ def get_model(bounds: _BoundsMode = "legacy") -> SobolModel:
     return _build(bounds)
 
 
+# Ready-made default adapter (legacy linear bounds) for `from ... import model`.
 model = _build("legacy")

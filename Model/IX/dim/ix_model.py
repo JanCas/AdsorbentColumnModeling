@@ -1,5 +1,30 @@
 """Ion-exchange adsorption column — diffrax solver (forward simulation, v1).
 
+This is the DIMENSIONAL (SI-unit) form of Model B (ion exchange) — see
+PROJECT_GUIDE.html sec.5.1. It integrates a 1-D packed-bed column in which
+capturing one cation A+ releases one proton H+, so the liquid acidifies as it
+loads and the pH feeds back on the isotherm. The state is therefore a
+THREE-FIELD system (unlike the two-field AlLDH model):
+
+    A   dissolved cation concentration           [mol/m^3]
+    T   proton-excess variable ([H+] - [OH-])    [mol/m^3]
+    n   solid loading on the exchange sites       [mol/kg]
+
+Governing equations (per unit bed volume), sec.5.1:
+    dA/dt = -(u_s/eps) dA/dx - (1-eps)/eps * rho_p * dn/dt
+    dT/dt = -(u_s/eps) dT/dx + (1-eps)/eps * rho_p * dn/dt
+    dn/dt = k (n_eq - n)                                  (linear LDF kinetics)
+The two fluid balances are mirror images (anti-symmetric coupling): every mole
+of A leaving the liquid returns a proton, so A+T is PURELY ADVECTED — a clean
+mass-balance invariant used by verification.py. The free proton [H+] is
+recovered from the proton-excess T via the water self-ionization closure, and
+n_eq is a Langmuir/mass-action isotherm in [H+] and A (see h_plus / n_eq).
+
+Role: this is the forward model the engineering optimizer calls. Key inputs are
+a ColumnParams (physics + inlet feed) and a list of PhaseConfig (adsorption then
+desorption). Key output of run_cycle is a list of diffrax.Solution, one per
+phase, plus cumulative time offsets for absolute-time plotting.
+
 Spec: Model/IX/IX_Column_Diffrax_Spec.md (parent doc: Modeling Adsorption Column).
 
 Unit convention (SI, fixed once here):
@@ -62,18 +87,26 @@ class State(eqx.Module):
 
 
 class ColumnParams(eqx.Module):
-    L: jax.Array
-    eps: jax.Array
-    rho_p: jax.Array
-    u_s: jax.Array
-    Q_sites: jax.Array
-    Kstar: jax.Array
-    k: jax.Array
-    Kw: jax.Array
-    A_in: jax.Array
-    T_in: jax.Array
-    eta_min: jax.Array
-    n_residual: jax.Array
+    """All physical parameters + inlet feed for one column run (see sec.5.1 table).
+
+    Leaves are JAX scalars (so the whole struct is differentiable / vmap-able);
+    N (number of spatial cells) is a static Python int so it can size arrays at
+    trace time. A_in/T_in here are the *base* inlet values, overridden per phase
+    by run_phase from the active PhaseConfig. eta_min and n_residual are the two
+    phase-stop thresholds (breakthrough efficiency; drained-bed loading).
+    """
+    L: jax.Array           # column length [m]
+    eps: jax.Array         # bed porosity [-]
+    rho_p: jax.Array       # particle (dry sorbent) density [kg/m^3]
+    u_s: jax.Array         # superficial velocity [m/s]; interstitial = u_s/eps
+    Q_sites: jax.Array     # ion-exchange site capacity [mol/kg]
+    Kstar: jax.Array       # dimensionless mass-action constant for A+/H+ exchange
+    k: jax.Array           # LDF rate constant [1/s]
+    Kw: jax.Array          # water ionization constant [(mol/m^3)^2]
+    A_in: jax.Array        # inlet cation conc [mol/m^3] (base; phase overrides)
+    T_in: jax.Array        # inlet proton excess [mol/m^3] (base; phase overrides)
+    eta_min: jax.Array     # adsorption stop: extraction efficiency floor [-]
+    n_residual: jax.Array  # desorption stop: mean-loading floor [mol/kg]
     N: int = eqx.field(static=True)
 
     def __post_init__(self):
@@ -83,9 +116,12 @@ class ColumnParams(eqx.Module):
 
     @property
     def dx(self) -> jax.Array:
+        # Uniform cell width for the N cell-centred nodes (sec.3: dx = L/N).
         return self.L / self.N
 
     def replace(self, **kwargs) -> "ColumnParams":
+        # Return a copy with selected leaves swapped out (used to overlay a
+        # phase's inlet A_in/T_in onto the base params without mutating in place).
         return eqx.tree_at(
             lambda x: [getattr(x, k) for k in kwargs.keys()],
             self,
@@ -94,6 +130,14 @@ class ColumnParams(eqx.Module):
 
 
 class PhaseConfig(eqx.Module):
+    """One phase of a cycle (e.g. 'adsorption' or 'desorption').
+
+    Holds the phase-specific inlet feed (A_in, T_in), the integration horizon
+    (t_max as an upper bound; dt0 initial step), the terminating event cond_fn
+    (adsorption_event or desorption_loading_drained), and an optional save_ts
+    grid at which the solution is recorded. The event usually fires well before
+    t_max.
+    """
     name: str = eqx.field(static=True)
     A_in: jax.Array
     T_in: jax.Array
@@ -119,21 +163,36 @@ def h_plus(T: jax.Array, Kw: jax.Array) -> jax.Array:
 
 
 def n_eq(A: jax.Array, Hp: jax.Array, args: ColumnParams) -> jax.Array:
-    """Mass-action (Langmuir-form) equilibrium loading."""
+    """Mass-action (Langmuir-form) equilibrium loading.
+
+    n_eq = Q_sites * (K* A) / ([H+] + K* A): the A+/H+ exchange competes for the
+    fixed sites, so a higher proton level [H+] shifts equilibrium off the solid
+    (this is the pH feedback that makes the acidic eluent strip the bed).
+    """
     return args.Q_sites * (args.Kstar * A) / (Hp + args.Kstar * A)
 
 
 def vector_field(t, y: State, args: ColumnParams) -> State:
+    """Right-hand side of the three-field PDE, discretized on N cell-centred
+    nodes (sec.5.1). Returns dA/dt, dT/dt, dn/dt as a State of shape-(N,) leaves.
+    """
     A, T, n = y.A, y.T, y.n
 
+    # LDF kinetics: [H+] from the water closure, then relax n toward n_eq at rate k.
     Hp = h_plus(T, args.Kw)
     dn = args.k * (n_eq(A, Hp, args) - n)
 
+    # First-order upwind (backward) advection. Prepend a ghost cell holding the
+    # inlet feed value so node 0 sees (A_in, T_in) upstream — this is the single
+    # Dirichlet inlet BC. The outlet needs no BC: the backward difference only
+    # looks upstream, so material simply advects out (free outflow, sec.3).
     A_up = jnp.concatenate([args.A_in[None], A[:-1]])
     T_up = jnp.concatenate([args.T_in[None], T[:-1]])
     dAdx = (A - A_up) / args.dx
     dTdx = (T - T_up) / args.dx
 
+    # Anti-symmetric solid coupling: uptake dn>0 removes A from the fluid and
+    # returns an equal proton to T (opposite signs), so A+T is purely advected.
     coup = (1.0 - args.eps) / args.eps * args.rho_p * dn
     dA = -(args.u_s / args.eps) * dAdx - coup
     dT = -(args.u_s / args.eps) * dTdx + coup
@@ -192,7 +251,12 @@ def initial_state(N: int, A0: float = 0.0, T0: float = 0.0, n0: float = 0.0) -> 
 @eqx.filter_jit
 def run_phase(y: State, ph: PhaseConfig, base_args: ColumnParams) -> diffrax.Solution:
     """Solve one phase. Inlet (A_in, T_in) is taken from ph and overlaid on base_args."""
+    # Overlay this phase's inlet feed onto the shared physics params.
     args = base_args.replace(A_in=ph.A_in, T_in=ph.T_in)
+    # Record on the phase's save grid (plus the final time); if none given, keep
+    # only the terminal state. NOTE: when the event fires before t_max, diffrax
+    # pads the unreached save_ts slots with Inf/NaN — callers filter to the last
+    # finite slot (see run_cycle / _last_finite).
     saveat = (
         diffrax.SaveAt(ts=ph.save_ts, t1=True)
         if ph.save_ts is not None
@@ -208,6 +272,9 @@ def run_phase(y: State, ph: PhaseConfig, base_args: ColumnParams) -> diffrax.Sol
         args=args,
         stepsize_controller=_CTRL,
         saveat=saveat,
+        # Terminating event: integration stops the step the cond_fn scalar
+        # crosses zero (breakthrough / drained). _ROOT is None here, so no
+        # polishing root-finder — the event is localized to one adaptive step.
         event=diffrax.Event(ph.cond_fn) if _ROOT is None else diffrax.Event(ph.cond_fn, _ROOT),
         max_steps=ph.max_steps,
     )
@@ -245,6 +312,9 @@ def run_cycle(
     t_offsets = []
     t_off = 0.0
     y = y0
+    # Chain phases: adsorption loads an empty bed; its end-of-phase state becomes
+    # the initial condition for desorption (inlet switched to strip fluid via the
+    # next PhaseConfig). t_off accumulates each phase's elapsed time for plotting.
     for i, ph in enumerate(phases):
         _log.info(
             "phase %d/%d '%s' start: t_off=%.3f s, A_in=%.3g, T_in=%.3g, "
@@ -256,7 +326,9 @@ def run_cycle(
         sols.append(sol)
         t_offsets.append(t_off)
         ts = np.asarray(sol.ts)
-        A_end = np.asarray(sol.ys.A[:, -1])
+        A_end = np.asarray(sol.ys.A[:, -1])   # outlet A over the save grid
+        # Drop the Inf/NaN padding diffrax writes past the event time; the last
+        # finite slot is the true end-of-phase (event) sample.
         finite = np.isfinite(ts) & np.isfinite(A_end)
         finite_idx = np.where(finite)[0]
         if finite_idx.size == 0:
@@ -270,6 +342,7 @@ def run_cycle(
         last = int(finite_idx[-1])
         t_phase_end = float(ts[last])
         t_off = t_off + t_phase_end
+        # Hand the end-of-phase field profiles to the next phase as its IC.
         y = jax.tree_util.tree_map(lambda a: a[last], sol.ys)
         n_mean = float(np.nanmean(np.asarray(sol.ys.n[last])))
         _log.info(

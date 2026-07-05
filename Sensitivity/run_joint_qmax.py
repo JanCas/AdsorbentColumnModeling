@@ -33,6 +33,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Put the two non-dim model folders (and the repo root) on sys.path so the
+# adapters can `import diffrax_non_dim_qmax` / `import ix_nondim_qmax` directly.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "Model" / "AlLDH"))
 sys.path.insert(0, str(_REPO_ROOT / "Model" / "IX" / "NonDim"))
@@ -46,6 +48,8 @@ from utils.logging_setup import configure_logging
 _log = logging.getLogger(__name__)
 
 
+# Joint bounds preset -> (AlLDH adapter bounds-mode, IX adapter bounds-mode).
+# One CLI flag picks matched sampling boxes for both legs.
 _BOUNDS_MAP: dict[str, tuple[str, str]] = {
     "ix":    ("ix",        "ix"),
     "alldh": ("alldh_log", "alldh"),
@@ -53,6 +57,11 @@ _BOUNDS_MAP: dict[str, tuple[str, str]] = {
 
 
 def _override_axis(model, axis_name: str, lo: float, hi: float):
+    """Return a copy of `model` with one named axis' bounds replaced by (lo, hi).
+
+    Raises SystemExit if the axis isn't present in this model's `names` (e.g.
+    an IX-only axis passed to the AlLDH leg).
+    """
     try:
         idx = model.names.index(axis_name)
     except ValueError:
@@ -67,6 +76,7 @@ def _override_axis(model, axis_name: str, lo: float, hi: float):
 
 def _apply_overrides(model, c_thresh_des_range, log10_lambda_range,
                      log10_da_range):
+    """Apply the CLI bounds overrides that exist on BOTH legs (shared axes)."""
     if c_thresh_des_range is not None:
         model = _override_axis(model, "C_thresh_des", *c_thresh_des_range)
     if log10_lambda_range is not None:
@@ -104,6 +114,11 @@ def _run_alldh_leg(
     log10_lambda_range,
     log10_da_range,
 ) -> None:
+    """Build the AlLDH adapter, apply overrides, and run its Sobol sweep.
+
+    Self-contained (re-imports + re-inits logging and sys.path) so it can be
+    the target of a fresh `spawn`ed process under --parallel.
+    """
     import sys as _sys
     from pathlib import Path as _Path
     _ROOT = _Path(__file__).resolve().parents[1]
@@ -143,6 +158,10 @@ def _run_ix_leg(
     log10_buffer_range,
     log10_h_in_des_range,
 ) -> None:
+    """Build the IX adapter (screen/full), apply overrides, run its Sobol sweep.
+
+    Self-contained like `_run_alldh_leg` so it can run in a spawned process.
+    """
     import sys as _sys
     from pathlib import Path as _Path
     _ROOT = _Path(__file__).resolve().parents[1]
@@ -160,6 +179,7 @@ def _run_ix_leg(
 
     factory = get_screen_model if ix_scope == "screen" else get_full_model
     model = factory(ix_bounds, t_max_mult)
+    # Shared-axis overrides first, then the IX-only ones (K*, buffer, H_in_des).
     model = _apply_overrides(model, c_thresh_des_range, log10_lambda_range,
                              log10_da_range)
     model = _apply_ix_overrides(model, log10_k_star_range,
@@ -179,6 +199,12 @@ _MODEL_SPECIFIC_AXES = {"log10_theta", "log10_K_star"}
 
 
 def _assert_distribution_match(alldh_model, ix_model) -> None:
+    """Sanity-check that the two legs agree on their shared axes before running.
+
+    Every AlLDH axis must have an IX counterpart (else the joint comparison is
+    broken) — except the isotherm axis, which legitimately diverged (θ vs K*)
+    and is only warned about. IX-only axes (pH groups) are expected and logged.
+    """
     alldh_names = set(alldh_model.names)
     ix_names    = set(ix_model.names)
     shared = alldh_names & ix_names
@@ -205,6 +231,12 @@ def _assert_distribution_match(alldh_model, ix_model) -> None:
 
 
 def main() -> None:
+    """CLI entry point: parse args, write config, run the AlLDH + IX legs.
+
+    Resolves the run directory under Results/Sensitivity/, dumps a
+    joint_config.json record of every setting, validates axis alignment, then
+    runs the two Sobol sweeps either serially or in parallel spawned processes.
+    """
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -304,6 +336,9 @@ def main() -> None:
     )
     _log.info("joint config -> %s", output_root / "joint_config.json")
 
+    # Build both adapters once, up front, purely to validate axis alignment
+    # (the actual sweeps rebuild them inside each leg). Apply the same CLI
+    # overrides here so the check sees exactly what the legs will run.
     alldh_model = get_alldh_model(alldh_bounds)
     ix_factory = (
         get_screen_model if args.ix_scope == "screen" else get_full_model
@@ -341,8 +376,10 @@ def main() -> None:
         )
 
     _assert_distribution_match(alldh_model, ix_model)
-    del alldh_model, ix_model
+    del alldh_model, ix_model  # validation-only; legs rebuild their own models
 
+    # Per-leg kwargs. The leg runners rebuild the adapter and re-apply the same
+    # overrides, so both serial calls and spawned processes see identical config.
     alldh_kwargs = dict(
         alldh_bounds=alldh_bounds,
         output_dir=output_root / "alldh",
@@ -374,6 +411,8 @@ def main() -> None:
     )
 
     if args.parallel:
+        # Each leg runs in its own spawned process (fresh JAX/interpreter state,
+        # avoids CPU-thread contention between the two independent sweeps).
         _log.info("==== joint q_max run: AlLDH + IX legs in parallel (spawn) ====")
         ctx = mp.get_context("spawn")
         p_alldh = ctx.Process(target=_run_alldh_leg, kwargs=alldh_kwargs,

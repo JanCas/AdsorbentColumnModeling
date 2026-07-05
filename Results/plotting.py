@@ -137,6 +137,7 @@ def scatter_plot(
 
 
 def _split_csv_arg(s: str | None) -> list[str] | None:
+    """Parse a comma-separated CLI string into a stripped list (None if empty)."""
     return [c.strip() for c in s.split(",")] if s else None
 
 
@@ -310,6 +311,7 @@ def generate_data_plots(
 
 
 def main() -> None:
+    """CLI entry point: parse args and dispatch to generate_data_plots."""
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("csv", type=Path, help="path to a samples CSV")

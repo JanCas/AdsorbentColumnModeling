@@ -156,6 +156,13 @@ class NonDimParams(eqx.Module):
 
 
 class PhaseConfig(eqx.Module):
+    """Static description of one phase (load or desorb) handed to `run_phase`.
+
+    Bundles the phase inlet (A_in, T_in), the diffrax integration window
+    (t_max, dt0, max_steps), the termination `cond_fn` (adsorption_event or
+    desorption_event), and an optional dense save grid `save_ts`. Marked-static
+    fields (name, cond_fn, max_steps) do not become JAX tracers.
+    """
     name: str = eqx.field(static=True)
     A_in: jax.Array
     T_in: jax.Array
@@ -337,6 +344,8 @@ def _last_finite_idx(sol: diffrax.Solution) -> jax.Array:
 
 
 def _finite_mean(sol: diffrax.Solution, scalar_per_save: jax.Array) -> jax.Array:
+    """Mean of a per-save scalar over the finite (non-padded) save slots only,
+    so NaN/Inf padding from a censored solve does not poison the average."""
     finite = jnp.isfinite(sol.ts) & jnp.isfinite(scalar_per_save)
     total = jnp.sum(jnp.where(finite, scalar_per_save, 0.0))
     n_fin = jnp.sum(finite)
@@ -344,6 +353,7 @@ def _finite_mean(sol: diffrax.Solution, scalar_per_save: jax.Array) -> jax.Array
 
 
 def _finite_max(scalar_per_save: jax.Array) -> jax.Array:
+    """Max over finite save slots (padding treated as -inf so it never wins)."""
     return jnp.max(jnp.where(jnp.isfinite(scalar_per_save),
                              scalar_per_save, -jnp.inf))
 
@@ -355,6 +365,7 @@ def _bed_mean_at(sol: diffrax.Solution, idx: jax.Array) -> jax.Array:
 
 
 def _phase_end_time(sol: diffrax.Solution) -> jax.Array:
+    """Largest finite save time = the phase termination time t* (event or t1)."""
     finite = jnp.isfinite(sol.ts)
     return jnp.max(jnp.where(finite, sol.ts, -jnp.inf))
 

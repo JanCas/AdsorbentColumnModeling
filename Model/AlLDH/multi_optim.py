@@ -1,3 +1,23 @@
+"""NSGA-II multi-objective optimizer for the dimensional AlLDH column model.
+
+Searches column designs that trade off two competing objectives:
+  * SEC          - specific energy consumption [J/mol Li], from Ergun pressure
+                   drop x flow x cycle time / Li recovered  (minimise)
+  * productivity - Li recovered per bed cross-section per cycle time
+                   [mol/(m^2 s)]                             (maximise)
+
+Each candidate is 5 design variables (column length L, superficial velocity
+u_super, desorption threshold, PSO rate k_s, bed porosity epsilon). ``_evaluate``
+builds a ``ColumnParameters``, runs a full adsorption/desorption cycle via
+``diffrax_column_model.run_model``, and maps the result to (SEC, -productivity);
+infeasible or solver-failed individuals are penalised with inf objectives.
+
+pymoo's NSGA-II evolves the population to a Pareto front, which the ``__main__``
+block prints, tags with extreme/elbow points, and saves as CSV + SVG. Physical
+constants and the isotherm come from a literature ``Study`` loaded from JSON.
+
+Run x64 on CPU (set below) — the model needs float64 for accuracy/stability.
+"""
 import jax
 jax.config.update("jax_platform_name", "cpu")
 jax.config.update("jax_enable_x64", True)
@@ -28,7 +48,13 @@ _log = logging.getLogger(__name__)
 
 
 class ColumnOptimizationProblem(ElementwiseProblem):
-    
+    """pymoo problem: 5 design vars -> 2 objectives (SEC, -productivity).
+
+    Design vector x = [L, u_super, des_threshold, k_s, epsilon]; xl/xu are the
+    per-variable lower/upper bounds. ElementwiseProblem evaluates one candidate
+    per ``_evaluate`` call.
+    """
+
     def __init__(self, study: Study, C_in: float, L_bounds: tuple, u_s_bounds: tuple, des_threshold_bounds: tuple, k_s_bounds: tuple, epsilon_bounds: tuple, loss_fraction: float = 0.01):
         super().__init__(
             n_var=5,
@@ -47,7 +73,10 @@ class ColumnOptimizationProblem(ElementwiseProblem):
 
 
     def _evaluate(self, x, out, *args, **kwargs):
+        """Evaluate one candidate design; writes objectives into ``out['F']``."""
         L, u_super, des_threshold, k_s, epsilon = float(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4])
+        # Build column params from the study, then override the swept variables.
+        # u_inter = u_super / epsilon (interstitial from superficial velocity).
         params = self.study.to_column_parameter(L=L, C_in=self.C_in, u_super=u_super)
         params = params.replace(k_s=k_s, epsilon=epsilon, u_inter=u_super / epsilon)
 
@@ -55,6 +84,7 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         (t_ads, C_ads, n_ads), (t_des, C_des, n_des, cumulative_out_des), fraction_lost, solver_ok = run_model(params, self.loss_fraction, des_threshold)
         elapsed = time.perf_counter() - t0
 
+        # Penalise a failed solve with infinite objectives so NSGA-II discards it.
         if not solver_ok:
             _log.warning(
                 "individual rejected (solver failed): L=%.2f u_super=%.5f k_s=%.4e eps=%.3f  elapsed=%.2fs",
@@ -65,6 +95,7 @@ class ColumnOptimizationProblem(ElementwiseProblem):
 
         li_recovered = self._li_recovered(n_ads, n_des, L, epsilon)  # mol/m²
 
+        # A design that captures no Li is infeasible -> also penalise with inf.
         if li_recovered <= 0 or not np.isfinite(li_recovered):
             _log.warning(
                 "individual rejected (infeasible li_recovered=%.3e): L=%.2f u_super=%.5f k_s=%.4e eps=%.3f  elapsed=%.2fs",
@@ -95,6 +126,8 @@ class ColumnOptimizationProblem(ElementwiseProblem):
 
 
     def _pressure_drop_per_unit_length(self, u_super, epsilon):
+        """Ergun equation dP/dL [Pa/m]: viscous (term1) + inertial (term2) losses
+        through the packed bed as a function of velocity, porosity, particle size."""
         term1 = (150 * self.mu * (1-epsilon)**2 * u_super) / (epsilon**3 * self.d_p**2)
         term2 = (1.75 * self.rho_water * (1-epsilon) * u_super**2) / (epsilon**3 * self.d_p)
 
@@ -105,6 +138,8 @@ class ColumnOptimizationProblem(ElementwiseProblem):
         n_ads = np.asarray(n_ads)
         n_des = np.asarray(n_des)
         x = np.linspace(0.0, L, n_ads.shape[0])
+        # Axial integral of (loaded - stripped) loading = net Li per kg sorbent
+        # times bed length; convert to per cross-section via solid bulk density.
         delta_n = (np.trapezoid(n_ads, x) - np.trapezoid(n_des, x))  # mol·m/kg
         return delta_n * self.rho_p * (1 - epsilon)  # mol/m²
 
@@ -134,6 +169,7 @@ def plot_pareto_front(res, save_path=None):
 
 
 def run_optimization(study: Study, C_in: float, L_bounds: tuple, u_bounds: tuple, des_threshold_bounds: tuple, k_s_bounds: tuple, epsilon_bounds: tuple, loss_fraction: float = 0.01, pop_size=40, seed=1):
+    """Build the problem and run NSGA-II; returns (pymoo result, problem)."""
     _log.info(
         "run_optimization: C_in=%.3g loss_fraction=%.3g pop_size=%d seed=%d  "
         "bounds: L=%s u=%s des_thresh=%s k_s=%s eps=%s",

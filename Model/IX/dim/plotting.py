@@ -1,4 +1,15 @@
-"""Matplotlib plots for the IX column model.
+"""Matplotlib plots for the DIMENSIONAL IX column model.
+
+Three views of a run_cycle result:
+    plot_breakthrough — outlet [A+] and extraction efficiency eta vs absolute
+                        time, across all phases (the breakthrough / elution curve)
+    plot_profiles     — spatial A(x), pH(x), n(x) snapshots within one phase
+    plot_eluate       — desorption outlet [A+] and cumulative recovered moles/area
+
+Styling is delegated to JansPlottingStuff: call apply_style() (JPS.apply())
+once near the top of a script and let it set the project-wide look. These
+functions therefore do NOT pass matplotlib style kwargs (colors, cmap, ...) —
+they only define what each axis shows.
 
 Kept separate from `ix_model.py` so the JAX core stays import-clean (no
 matplotlib pulled in when the model is used inside an optimizer / vmap).
@@ -25,6 +36,7 @@ def apply_style() -> None:
 
 
 def _phase_grid(params: ColumnParams) -> np.ndarray:
+    """Cell-centred x-coordinates [m] of the N nodes, for spatial-profile plots."""
     N = int(params.N)
     L = float(params.L)
     dx = L / N
@@ -33,6 +45,7 @@ def _phase_grid(params: ColumnParams) -> np.ndarray:
 
 
 def _outlet_A(sol: diffrax.Solution) -> np.ndarray:
+    """Outlet cation concentration [A+] over time = last spatial node of each save."""
     return np.asarray(sol.ys.A[:, -1])
 
 
@@ -114,7 +127,8 @@ def plot_profiles(
     for i in idx:
         label = f"t = {ts_all[i]:.1f} s"
         ax[0].plot(x, A_all[i], label=label)
-        # [H+] in mol/m^3 -> mol/L for pH reference
+        # Recover [H+] from proton excess T (same water closure as the model),
+        # convert mol/m^3 -> mol/L, then pH = -log10([H+]_L). Clip guards log(0).
         Hp = np.asarray(h_plus(T_all[i], Kw)) / LITER_PER_M3
         ax[1].plot(x, -np.log10(np.clip(Hp, 1e-300, None)), label=label)
         ax[2].plot(x, n_all[i], label=label)

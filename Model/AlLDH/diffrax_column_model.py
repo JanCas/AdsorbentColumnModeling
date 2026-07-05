@@ -1,3 +1,32 @@
+"""Dimensional 1-D packed-bed adsorption model for the AlLDH sorbent (SI units).
+
+This is the *engineering* forward model that the NSGA-II optimizer
+(``multi_optim.py``) calls to evaluate a candidate column design. It solves a
+plug-flow advection PDE for the mobile (liquid) concentration ``C`` coupled to a
+pseudo-second-order (PSO) linear-driving-force law for the solid loading ``n``:
+
+    dC/dt = -u_inter * dC/dx - (1-eps)/eps * rho_p * dn/dt
+    dn/dt =  k_s * (n_eq(C) - n) * |n_eq(C) - n|      (PSO: rate ~ distance^2)
+
+with ``n_eq(C)`` an equilibrium isotherm supplied as a callable (Langmuir /
+Temkin / Sips fitted to literature data). Axial dispersion is neglected, so
+advection uses a first-order upwind (backward) finite difference on a uniform
+grid; the inlet Dirichlet BC enters through a ghost cell and the outlet is a
+free convective outflow (no BC imposed).
+
+A full cycle is two phases chained back-to-back (see ``_run_model_jit``):
+  1. Adsorption  - empty-ish bed, inlet ``C = C_in``; stops once the cumulative
+                   outlet loss exceeds ``loss_fraction`` (breakthrough).
+  2. Desorption  - loaded profile handed over from phase 1, inlet ``C = 0``;
+                   stops once mean loading falls below ``desorption_threshold``.
+
+Inputs: a ``ColumnParameters`` bundle (u_inter, k_s, epsilon, C_in, L, rho_p,
+isotherm) plus the two scalar thresholds. Outputs: end-of-phase (t, C, n)
+states, cumulative desorption outlet, and a solver-ok flag.
+
+The heavy numerics live in ``_run_model_jit`` (``@eqx.filter_jit``); ``run_model``
+is the thin, loggable Python wrapper around it.
+"""
 import logging
 import sys
 from collections.abc import Callable
@@ -19,12 +48,15 @@ _log = logging.getLogger(__name__)
 # set_initial_adsorption_state, get_finish_state). Log in `run_model` only.
 
 # Represents values on a uniform spatial grid with fixed spacing δx.
+# The arithmetic operators (__add__, __mul__, ...) let diffrax treat this as a
+# PyTree "vector", so ODE tangents can be scaled/added elementwise on .vals.
 class SpatialDiscretisation(eqx.Module):
     δx: Float[Array, ""]
     vals: Float[Array, "n"]
 
     @classmethod
     def discretise_fn(cls, x0: float, x_final: float, n: int, fn: Callable):
+        """Sample ``fn`` on ``n`` uniform nodes over [x0, x_final] into a grid field."""
         if n < 2:
             raise ValueError("Must discretise [x0, x_final] into at least two points")
         vals = jax.vmap(fn)(jnp.linspace(x0, x_final, n))
@@ -32,6 +64,8 @@ class SpatialDiscretisation(eqx.Module):
         return cls(δx, vals)
 
     def binop(self, other, fn):
+        # Apply fn elementwise to .vals, keeping grid spacing; `other` may be a
+        # bare array/scalar or another SpatialDiscretisation.
         other_vals = other.vals if isinstance(other, SpatialDiscretisation) else other
         return SpatialDiscretisation(self.δx, fn(self.vals, other_vals))
 
@@ -53,6 +87,9 @@ class SpatialDiscretisation(eqx.Module):
     def __rsub__(self, other):
         return self.binop(other, lambda x, y: y - x)
 
+# Full solver state: liquid concentration field C, solid loading field n, and a
+# scalar accumulator for material that has left the outlet (used by the
+# breakthrough / loss event).
 class ColumnState(eqx.Module):
     C: SpatialDiscretisation
     n: SpatialDiscretisation
@@ -64,17 +101,30 @@ def _spatial_tangent(sd: SpatialDiscretisation, dvals_dt: Float[Array, "n"]) -> 
     return SpatialDiscretisation(jnp.zeros_like(sd.δx), dvals_dt)
 
 def column_ode(t, state: ColumnState, args: ColumnParameters):
+    """Right-hand side of the coupled advection + PSO-kinetics PDE (per node).
+
+    Returns dC/dt and dn/dt on the grid plus the outlet-flux accumulator rate.
+    ``args`` carries the (constant) inlet BC ``C_in`` so switching to 0 gives the
+    desorption phase without touching this function.
+    """
     # jax.debug.print("args={a.C_in}", a=args)
     C = state.C
     n = state.n
 
+    # Equilibrium loading at each node's local C, then PSO driving force:
+    # dn/dt = k_s (n_eq - n)|n_eq - n|. The |.| keeps the correct sign for both
+    # uptake (n_eq > n) and release (n_eq < n) while making the rate quadratic.
     n_star = jax.vmap(args.isotherm)(C.vals)
     dn_dt = args.k_s * (n_star - n.vals) * jnp.abs(n_star - n.vals)
 
+    # Upwind (backward) difference dC/dx: shift the field one node downstream and
+    # overwrite node 0 with the ghost-cell inlet value C_in (Dirichlet BC). Flow
+    # is left-to-right so the upstream neighbour is the correct upwind stencil.
     C_prev = jnp.roll(C.vals, shift=1)
     C_prev = C_prev.at[0].set(args.C_in)
 
     advection_dc_dx = (C.vals - C_prev) / C.δx
+    # Sink term: solute taken up by the solid, scaled by solid/liquid volume ratio.
     sorption = (1 - args.epsilon) / args.epsilon * args.rho_p * dn_dt
 
     dC_dt = -args.u_inter * advection_dc_dx - sorption
@@ -91,6 +141,9 @@ def column_ode(t, state: ColumnState, args: ColumnParameters):
     )
 
 def make_adsorption_event(bed_utilization):
+    """Event: stop adsorption once mean bed loading reaches ``bed_utilization``
+    of the feed-equilibrium capacity. (Unused by the optimizer path, which uses
+    the outlet-loss event below; kept as an alternative stop criterion.)"""
     def adsorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
         total_adsorbed = jnp.sum(y.n.vals)
         potential_adsorbed = params.isotherm(params.C_in) * len(y.n.vals)
@@ -102,9 +155,11 @@ def make_adsorption_event(bed_utilization):
 def make_desorption_event(potential_adsorbed, threshold=0.02):
     """Create desorption event that stops when loading drops below threshold of max potential."""
     def desorption_finish_event(t, y: ColumnState, params: ColumnParameters, **kwargs):
+        # Mean loading has fallen to ``threshold`` of the max potential loading:
+        # the bed is considered stripped and elution is done.
         total_adsorbed = jnp.sum(y.n.vals)
         ratio = total_adsorbed / potential_adsorbed
-        
+
         return ratio < threshold
     return desorption_finish_event
 
@@ -119,6 +174,9 @@ def make_adsorption_loss_event(loss_fraction):
         cumulative_out / (C_in * u_inter * epsilon * t) > loss_fraction
     """
     def adsorption_loss_event(t, y, params: ColumnParameters, **kwargs):
+        # Cumulative material fed in so far = C_in * (superficial flux) * t.
+        # Trip once the fraction that has escaped the outlet exceeds loss_fraction
+        # (breakthrough). This is the stop criterion the optimizer actually uses.
         cumulative_in = params.C_in * params.u_inter * params.epsilon * t
         fraction_lost = jnp.where(cumulative_in > 0, y.cumulative_out / cumulative_in, 0.0)
         # jax.debug.print("{t}, {cumulative_in}, {fraction_lost}", t=t, cumulative_in=cumulative_in, fraction_lost=fraction_lost)
@@ -128,6 +186,11 @@ def make_adsorption_loss_event(loss_fraction):
 
 
 def get_finish_state(solution):
+    """Extract the last valid saved sample from a diffrax solution.
+
+    An event-terminated solve fills unused SaveAt slots with inf timestamps, so
+    the number of finite ``ts`` entries locates the true final index.
+    """
     valid = jnp.isfinite(solution.ts)
     idx = jnp.sum(valid)-1
 
@@ -166,6 +229,8 @@ def _run_model_jit(
     y0_ads = set_initial_adsorption_state(x0, x_final, n, desorption_threshold, column_params)
 
     #Temporal discretization
+    # t_final = inf: the phase runs until its terminating Event fires, not a
+    # fixed end time. dt is only the initial step; the PID controller adapts it.
     t0 = 0
     t_final = jnp.inf
     dt = 1
@@ -178,6 +243,7 @@ def _run_model_jit(
     stepsize_controller = diffrax.PIDController(rtol=rtol, atol=atol)
     # stepsize_controller = diffrax.ConstantStepSize()
 
+    # ---- Phase 1: Adsorption (inlet C_in, stop at breakthrough loss) --------
     ads_event = diffrax.Event(make_adsorption_loss_event(loss_fraction))
 
     solution_ads = diffrax.diffeqsolve(
@@ -192,12 +258,13 @@ def _run_model_jit(
         stepsize_controller=stepsize_controller,
         event=ads_event,
         max_steps=2**15,
-        throw=False
+        throw=False  # don't raise on failure; report via solver_ok instead
     )
     t_ads_final, C_ads_final, n_ads_final, cumulative_out_ads_final = get_finish_state(solution_ads)
 
     ads_ok = diffrax.is_okay(solution_ads.result)
 
+    # Hand the end-of-adsorption profiles over as the desorption initial state.
     y0_des = ColumnState(
         C=SpatialDiscretisation(y0_ads.C.δx, C_ads_final),
         n=SpatialDiscretisation(y0_ads.n.δx, n_ads_final),
@@ -212,6 +279,9 @@ def _run_model_jit(
     potential_adsorbed = column_params.isotherm(column_params.C_in) * n
     des_event = diffrax.Event(make_desorption_event(potential_adsorbed, desorption_threshold))
 
+    # ---- Phase 2: Desorption ------------------------------------------------
+    # Switch the inlet BC to zero (strip fluid) and re-solve the SAME ode from
+    # the loaded state; the bed drains until mean loading drops below threshold.
     column_params = column_params.replace(C_in=0)
 
     solution_des = diffrax.diffeqsolve(
@@ -232,7 +302,7 @@ def _run_model_jit(
     t_des_final, C_des_final, n_des_final, cumulative_out_des_final = get_finish_state(solution=solution_des)
 
     des_ok = diffrax.is_okay(solution_des.result)
-    solver_ok = ads_ok & des_ok
+    solver_ok = ads_ok & des_ok  # both phases must have integrated cleanly
 
     return (t_ads_final, C_ads_final, n_ads_final), (t_des_final, C_des_final, n_des_final, cumulative_out_des_final), fraction_lost, solver_ok
 
