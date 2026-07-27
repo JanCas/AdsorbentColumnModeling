@@ -21,6 +21,21 @@ A port that "improves" on the original cannot be tested against it, and every mi
 becomes unattributable. Do not add guards or refactor the algebra without re-running the
 parity suite.
 
+VALIDITY. The parity suite proves this reproduces the MATLAB; it says nothing about whether
+the MATLAB is right. Two limits found while validating `water_activity` against independent
+data (parity/test_water_activity.py):
+
+  * Single salts to ~6 mol/kg are excellent — saturated NaCl and MgCl2 reproduce the
+    Greenspan (1977) humidity standards to 0.0002 and 0.0024 in water activity.
+  * Beyond ~6 mol/kg the virial parameters extrapolate badly. Saturated LiCl (19.6 mol/kg)
+    gives a_w = 0.027 against a standard of 0.113. Do not trust any output above ~6 mol/kg
+    in a single salt.
+  * For *mixtures* this model and pyEQL disagree substantially on the osmotic coefficient
+    — phi = 1.23 vs 0.96 at (0.1, 2.0, 1.0). The disagreement is in phi itself, not in the
+    conversion (pyEQL's own phi through `water_activity` reproduces pyEQL's own a_w to 1e-4).
+    Which is correct is unresolved and depends on the theta/psi mixing parameters above;
+    the target brine regime is mixtures, so this is worth settling against measured data.
+
 This module is pure JAX: no I/O, no matplotlib, and no dependency on anything in parity/.
 The differential test suite lives in parity/ — see parity/test_parity.py.
 
@@ -58,6 +73,10 @@ _E_CHARGE = 1.602e-19
 _EPS_R = 78.0
 _RHO_W = 998.0  # kg/m^3
 _TEMP = 298.15  # K
+
+# Molar mass of water, kg/mol. Not used by the MATLAB — it enters only in the
+# osmotic-coefficient -> water-activity conversion below.
+_M_W = 0.01801528
 
 # --- ionic charges (MATLAB line 11) ---
 
@@ -381,6 +400,60 @@ def pitzer_mix(m_LiCl, m_NaCl, m_MgCl2):
     """
     t = pitzer_terms(m_LiCl, m_NaCl, m_MgCl2)
     return t.lngamma_LiCl, t.lngamma_NaCl, t.lngamma_MgCl2, t.osmo_w
+
+
+def water_activity(osmo_w, m_tot):
+    """Water activity from the osmotic coefficient.
+
+        ln a_w = -M_w * phi * sum_i m_i
+
+    which is the defining relation for phi, rearranged — exact, not a correlation.
+    M_w is the molar mass of water in kg/mol and the sum runs over every solute
+    *species*, i.e. the dissociated ions, not the salts.
+
+    Note the second argument. The conversion is not a function of phi alone: two
+    solutions with the same osmotic coefficient and different total molality have
+    different water activities. Pass `pitzer_terms(...).m_tot`, which is exactly this
+    sum (m_Li + m_Na + m_Mg + m_Cl); `pitzer_mix` does not return it, so use
+    `water_activity_of` below if you only have the molalities.
+
+    This has no counterpart in `pitzer-kim functions.m` and so is not covered by the
+    MATLAB parity suite. It is validated against literature NaCl and MgCl2 data in
+    parity/test_water_activity.py instead.
+
+    Parameters
+    ----------
+    osmo_w
+        Osmotic coefficient of water, dimensionless (the 4th output of pitzer_mix).
+    m_tot
+        Total molality of all dissolved ions, mol/kg water.
+
+    Returns
+    -------
+    a_w : jax.Array
+        Water activity, dimensionless. 1 for pure water, decreasing with salinity;
+        equals the equilibrium relative humidity over the solution.
+    """
+    return jnp.exp(-_M_W * jnp.asarray(osmo_w) * jnp.asarray(m_tot))
+
+
+def water_activity_of(m_LiCl, m_NaCl, m_MgCl2):
+    """Water activity straight from the salt molalities.
+
+    Convenience wrapper: runs the model and supplies `m_tot` to `water_activity` for you.
+
+    Parameters
+    ----------
+    m_LiCl, m_NaCl, m_MgCl2
+        Salt molalities, mol/kg water.
+
+    Returns
+    -------
+    a_w : jax.Array
+        Water activity, dimensionless.
+    """
+    t = pitzer_terms(m_LiCl, m_NaCl, m_MgCl2)
+    return water_activity(t.osmo_w, t.m_tot)
 
 
 # Field order of PitzerTerms, which is also the assertion order of the parity suite and
