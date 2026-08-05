@@ -7,3 +7,9 @@ utils/__pycache__/*.pyc
 utils/__pycache__/Dataclasses.cpython-313.pyc
 conversation_cumulative_out_event.md
 Model/AlLDH/__pycache__/diffrax_column_model.cpython-314.pyc
+# Derived from "pitzer-kim functions.m" on every oracle run; the golden CSVs beside it
+# (parity/oracle_matlab.csv, parity/oracle_octave.csv) ARE committed, so the parity suite
+# runs without Octave or MATLAB installed.
+Model/Multi_Ion_ALLDH/parity/_generated/
+Model/Multi_Ion_ALLDH/**/.pytest_cache/
+Model/Multi_Ion_ALLDH/**/__pycache__/
