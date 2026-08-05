@@ -30,11 +30,24 @@ data (parity/test_water_activity.py):
   * Beyond ~6 mol/kg the virial parameters extrapolate badly. Saturated LiCl (19.6 mol/kg)
     gives a_w = 0.027 against a standard of 0.113. Do not trust any output above ~6 mol/kg
     in a single salt.
-  * For *mixtures* this model and pyEQL disagree substantially on the osmotic coefficient
-    — phi = 1.23 vs 0.96 at (0.1, 2.0, 1.0). The disagreement is in phi itself, not in the
-    conversion (pyEQL's own phi through `water_activity` reproduces pyEQL's own a_w to 1e-4).
-    Which is correct is unresolved and depends on the theta/psi mixing parameters above;
-    the target brine regime is mixtures, so this is worth settling against measured data.
+  * SUSPECT PARAMETER: _PSI_NAMGCL = -0.0517 disagrees with the standard Harvie-Moller-
+    Weare value of -0.012 (as shipped in PHREEQC's pitzer.dat, the reference
+    parameterisation for the seawater system) by a factor of 4.3. _THETA_NAMG = 0.0970
+    likewise vs 0.07.
+
+    In mixed NaCl/MgCl2 brines this drives phi below PHREEQC by up to 0.29. The gap is
+    quantitatively explained by psi alone: the analytic term
+    (2/sum m) * m_Na * m_Mg * m_Cl * delta_psi predicts it to within 0.012 at every
+    composition tested, and substituting the two HMW values cuts the error to <= 0.022,
+    the same order as the single-salt parameter differences. Na-Mg mixing is nearly ideal
+    in reality; psi = -0.0517 makes it strongly non-ideal.
+
+    Left as-is deliberately — the port must reproduce the MATLAB, and changing this is a
+    modelling decision that belongs in the .m source. Impact if you rely on absolute
+    values in mixtures: phi off by up to 0.39, a_w by up to 0.06, gamma by 4-13 %.
+
+    Not checked, for want of a reference: _THETA_LIMG = 0.2198 and _PSI_LIMGCL. PHREEQC's
+    pitzer.dat carries no Li mixing parameters at all, so the Li terms are unverified.
 
 This module is pure JAX: no I/O, no matplotlib, and no dependency on anything in parity/.
 The differential test suite lives in parity/ — see parity/test_parity.py.
