@@ -320,7 +320,7 @@ def plot_desorption(t, C, n):
 
 
 if __name__ == "__main__":
-    study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
+    study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2019")
 
     column_length = study.column_experiments.column_properties.Length_si
     column_diameter = study.column_experiments.column_properties.Diameter_si
