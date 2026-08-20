@@ -1,5 +1,5 @@
 {
-    "jiangAdsorptionLithiumIons2020":{
+    "jiangAdsorptionLithiumIons2019":{
         "IsothermUnits":{
             "C_e": "mg/L",
             "q_e": "mg/g",
@@ -121,6 +121,138 @@
             "particle_diameter_units": "m"
         }
     },
+    "jiangApplicationConcentrationDependentHSDM2020":{
+        "IsothermUnits":{
+            "C_e": "mg/L",
+            "q_e": "mg/g",
+            "T": "K"
+        },
+        "Isotherm":{
+            "T": 303,
+            "Ph": 7.0,
+            "C_e":[18.27956989247312, 35.483870967741936, 112.90322580645162, 325.80645161290323, 539.7849462365591, 1068.8172043010752, 1523.6559139784947],
+            "C_e_units": "mg/L",
+            "q_e":[2.2383838383838386, 3.3818181818181823, 4.767676767676768, 5.470707070707071, 5.725252525252525, 5.761616161616162, 5.761616161616162],
+            "q_e_units": "mg/g",
+            "FitType": "Sips",
+            "FitParameters": {
+                "q_max": 5.9522,
+                "K_s": 0.03439,
+                "m": 1.0,
+                "q_max_units": "mg/g",
+                "K_L_units": "L/mg"
+            },
+            "Notes": "Figure 3 redigitized from the source PDF at 300 dpi. The authoritative nonlinear Langmuir fit is Table 2: q0=5.9522 mg/g, b=0.03439 L/mg, R2=0.9985, SSE=0.01743. Table 2 prints b units as L/g, but Eq. (4), the plotted curve, and the numeric values require L/mg. Encoded as Sips with m=1."
+        },
+        "KineticsUnits":{
+            "time": "min",
+            "q_t": "mg/g",
+            "T": "K",
+            "C_e": "mg/L"
+        },
+        "KineticsNotes": "No pseudo-second-order batch constant is reported. A single global k2=1.00148162948e-4 kg sorbent/(mol Li s) was fitted to the pooled Figure 4C flow-rate curves and used unchanged for the height and inlet-concentration cases.",
+        "KineticsExperiments":[],
+        "ColumnExperiments":{
+            "Properties":{
+                "Length": 0.6,
+                "Length_units": "m",
+                "Diameter": 0.02,
+                "Diameter_units": "m",
+                "porosity": 0.355
+            },
+            "BreakthroughCurves":{
+                "Units":{
+                    "flowrate": "BV/h",
+                    "T": "K",
+                    "influent_concentration": "mg/L"
+                },
+                "Curves":[
+                {
+                    "flowrate": 1.9098593171027443,
+                    "T": 303,
+                    "PH": 7.0,
+                    "influent_concentration": 350,
+                    "BV":[0.0, 0.318309886, 0.636619772, 0.954929659, 1.432394488, 1.909859317, 2.864788976, 3.819718634, 5.252113122, 6.68450761, 8.276057041, 9.867606472, 11.459155903, 13.36901522, 15.278874537, 17.188733854, 19.098593171, 21.008452488, 22.918311805],
+                    "C_out/C_in":[0.0, 0.0, 0.0, 0.0, 0.0, 0.010784314, 0.05, 0.143137255, 0.32254902, 0.473529412, 0.561764706, 0.628431373, 0.674509804, 0.702941176, 0.729411765, 0.753921569, 0.769607843, 0.781372549, 0.797058824]
+                },
+                {
+                    "flowrate": 2.8647889756541165,
+                    "T": 303,
+                    "PH": 7.0,
+                    "influent_concentration": 350,
+                    "BV":[0.0, 0.477464829, 0.954929659, 1.432394488, 2.148591732, 2.864788976, 4.297183463, 5.729577951, 7.878169683, 10.026761415, 12.414085561, 14.801409708, 17.188733854, 20.05352283, 22.918311805, 25.783100781, 28.647889757, 31.512678732, 34.377467708],
+                    "C_out/C_in":[0.0, 0.0, 0.011764706, 0.062745098, 0.147058824, 0.198039216, 0.364705882, 0.485294118, 0.605882353, 0.690196078, 0.741176471, 0.779411765, 0.805882353, 0.829411765, 0.841176471, 0.858823529, 0.87254902, 0.880392157, 0.895098039]
+                },
+                {
+                    "flowrate": 4.7746482927568605,
+                    "T": 303,
+                    "PH": 7.0,
+                    "influent_concentration": 350,
+                    "BV":[0.0, 0.795774715, 1.193662073, 1.591549431, 2.387324146, 3.978873577, 4.774648293, 7.161972439, 10.345071301, 13.528170163, 16.711269025, 20.292255244, 23.873241464, 28.647889757, 33.422538049, 40.584510488, 47.746482928],
+                    "C_out/C_in":[0.0, 0.003921569, 0.256862745, 0.319607843, 0.379411765, 0.459803922, 0.509803922, 0.620588235, 0.72745098, 0.776470588, 0.82254902, 0.85, 0.858823529, 0.879411765, 0.9, 0.912745098, 0.920588235]
+                }
+            ]},
+            "HeightCurves": {
+                "Units": {"height": "m", "flowrate": "mL/min", "influent_concentration": "mg/L", "time": "min"},
+                "Curves": [
+                    {
+                        "height": 0.3,
+                        "flowrate": 15,
+                        "influent_concentration": 350,
+                        "time": [0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 165, 210, 255, 300, 360, 420],
+                        "C_out/C_in": [0, 0.325163988, 0.571413052, 0.639645836, 0.670808869, 0.704619741, 0.734560695, 0.760835409, 0.833141792, 0.862675385, 0.907281295, 0.92866769, 0.937833288, 0.948832005, 0.952090885, 0.956164484]
+                    },
+                    {
+                        "height": 0.6,
+                        "flowrate": 15,
+                        "influent_concentration": 350,
+                        "time": [0, 10, 15, 20, 30, 50, 60, 90, 130, 170, 210, 255, 300, 360, 420, 510, 600],
+                        "C_out/C_in": [0, 0.003921569, 0.256862745, 0.319607843, 0.379411765, 0.459803922, 0.509803922, 0.620588235, 0.72745098, 0.776470588, 0.82254902, 0.85, 0.858823529, 0.879411765, 0.9, 0.912745098, 0.920588235]
+                    },
+                    {
+                        "height": 1.0,
+                        "flowrate": 15,
+                        "influent_concentration": 350,
+                        "time": [0, 10, 15, 20, 30, 45, 60, 120, 165, 210, 255, 300, 360, 420, 510, 600],
+                        "C_out/C_in": [0, 0, 0, 0, 0.076674445, 0.160590586, 0.204992816, 0.487293231, 0.603798164, 0.684659106, 0.738226934, 0.780592364, 0.809107557, 0.822550434, 0.844547869, 0.864508505]
+                    }
+                ]
+            },
+            "InfluentConcentrationCurves": {
+                "Units": {"height": "m", "flowrate": "mL/min", "influent_concentration": "mg/L", "time": "min"},
+                "Curves": [
+                    {
+                        "height": 0.6,
+                        "flowrate": 15,
+                        "influent_concentration": 300,
+                        "time": [0, 10, 15, 20, 30, 50, 60, 90, 130, 170, 210, 255, 300, 360, 420, 510, 600],
+                        "C_out/C_in": [0, 0.056830667, 0.166336673, 0.239136756, 0.312548604, 0.413489894, 0.47874487, 0.573772429, 0.68490981, 0.751592238, 0.787890319, 0.826635461, 0.839890378, 0.858447262, 0.878227676, 0.887812001, 0.900455152]
+                    },
+                    {
+                        "height": 0.6,
+                        "flowrate": 15,
+                        "influent_concentration": 350,
+                        "time": [0, 10, 15, 20, 30, 50, 60, 90, 130, 170, 210, 255, 300, 360, 420, 510, 600],
+                        "C_out/C_in": [0, 0.003921569, 0.256862745, 0.319607843, 0.379411765, 0.459803922, 0.509803922, 0.620588235, 0.72745098, 0.776470588, 0.82254902, 0.85, 0.858823529, 0.879411765, 0.9, 0.912745098, 0.920588235]
+                    },
+                    {
+                        "height": 0.6,
+                        "flowrate": 15,
+                        "influent_concentration": 400,
+                        "time": [0, 10, 15, 20, 30, 45, 60, 90, 120, 165, 210, 255, 300, 360, 420, 510, 600],
+                        "C_out/C_in": [0, 0.081301283, 0.310305464, 0.3892232, 0.457333081, 0.548893969, 0.592941078, 0.686949028, 0.749145177, 0.812564857, 0.847027641, 0.875984536, 0.895968873, 0.90922379, 0.917992427, 0.926557143, 0.934714015]
+                    }
+                ]
+            },
+            "Notes": "Figure 4A-C redigitized from the embedded source figure. Flow rates are 6, 9, and 15 mL/min; bed heights are 0.3, 0.6, and 1.0 m; inlet lithium concentrations are 300, 350, and 400 mg/L."
+        },
+        "SorbentProperties":{
+            "density": 1378.7,
+            "density_units": "kg/m3",
+            "particle_diameter": 0.65e-3,
+            "particle_diameter_units": "m"
+        }
+    },
     "zhongLiAdsorptionPerformance2021":{
         "IsothermUnits":{
             "C_e": "mg/L",
@@ -201,5 +333,332 @@
             }
         }
 
+    },
+
+    "qianAdsorptionPerformanceMechanism2023": {
+        "IsothermUnits": {
+            "C_e": "mg/L",
+            "q_e": "mg/g",
+            "T": "K"
+        },
+        "Isotherm": {
+            "T": 298,
+            "Ph": 7.0,
+            "C_e": [],
+            "C_e_units": "mg/L",
+            "q_e": [],
+            "q_e_units": "mg/g",
+            "FitType": "Sips",
+            "FitParameters": {
+                "q_max": 1.7,
+                "K_s": 0.192,
+                "m": 1.0,
+                "q_max_units": "mg/g",
+                "K_L_units": "L/mg"
+            },
+            "Notes": "DOI 10.3389/fchem.2023.1265290 (Qian et al., Front. Chem. 2023, OPEN ACCESS). VERIFIED against source Table 3 (three independent reads agree). Native model is LANGMUIR; encoded here as Sips with m=1 (mathematically identical). Langmuir params: 298 K qmax=1.70 mg/g KL=0.192 L/mg R2=0.991; 308 K qmax=1.88 KL=0.224 R2=0.962; 318 K qmax=2.06 KL=0.242 R2=0.926. Freundlich (Table 3): 298 K KF=0.598 mg/g n=4.316; 308 K KF=0.704 n=4.536; 318 K KF=0.780 n=4.626. Raw C_e/q_e points only in Fig. 6 -> require digitization. Sorbent = Li/Al-LDH-SiO2 loaded bauxite (LDH-Si-BX); isotherm test conc 5-100 mg/L, 24 h equilibration, pH 7."
+        },
+        "KineticsUnits": {
+            "time": "min",
+            "q_t": "mg/g",
+            "T": "K",
+            "C_e": "mg/L"
+        },
+        "KineticsExperiments": [
+            {
+                "T": 298,
+                "C_e": 10,
+                "Ph": 7.0,
+                "time": [],
+                "q_t": [],
+                "FitType": "PseudoSecondOrder",
+                "FitParameters": {
+                    "k2": 0.013,
+                    "q_e": 1.16,
+                    "k2_units": "g/mg/min",
+                    "q_e_units": "mg/g"
+                },
+                "Notes": "VERIFIED Table 2 (10 mg/L: k2=0.013, qe,cal=1.16, qe,exp=0.96, R2=0.966). Raw time/q_t only in Fig. 5. Kinetic T not stated; assumed 298 K."
+            },
+            {
+                "T": 298,
+                "C_e": 25,
+                "Ph": 7.0,
+                "time": [],
+                "q_t": [],
+                "FitType": "PseudoSecondOrder",
+                "FitParameters": {
+                    "k2": 0.015,
+                    "q_e": 1.52,
+                    "k2_units": "g/mg/min",
+                    "q_e_units": "mg/g"
+                },
+                "Notes": "VERIFIED Table 2 (25 mg/L: k2=0.015, qe,cal=1.52, qe,exp=1.32, R2=0.972). Fig. 5."
+            },
+            {
+                "T": 298,
+                "C_e": 50,
+                "Ph": 7.0,
+                "time": [],
+                "q_t": [],
+                "FitType": "PseudoSecondOrder",
+                "FitParameters": {
+                    "k2": 0.014,
+                    "q_e": 1.76,
+                    "k2_units": "g/mg/min",
+                    "q_e_units": "mg/g"
+                },
+                "Notes": "VERIFIED Table 2 (50 mg/L: k2=0.014, qe,cal=1.76, qe,exp=1.54, R2=0.974). Fig. 5."
+            }
+        ],
+        "ColumnExperiments": {
+            "Properties": {
+                "Length": "NA",
+                "Length_units": "m",
+                "Diameter": "NA",
+                "Diameter_units": "m",
+                "porosity": "NA"
+            },
+            "BreakthroughCurves": {
+                "Units": {
+                    "flowrate": "BV/h",
+                    "T": "K",
+                    "influent_concentration": "mg/L"
+                },
+                "Curves": []
+            },
+            "Notes": "No column/fixed-bed experiment (batch equilibrium + kinetics study). Geometry NA."
+        },
+        "SorbentProperties": {
+            "density": "NA",
+            "density_units": "kg/m3",
+            "particle_diameter": 0.0001,
+            "particle_diameter_units": "m",
+            "Notes": "VERIFIED Table 1: BET 152.6 m2/g, pore volume 0.11 cm3/g, avg pore 3.1 nm. particle_diameter = 100e-6 m = midpoint of the 80-120 um bauxite support size (finished granule size not separately stated). Packed/bulk density not reported (NA). 83.2% capacity retained after 10 adsorption-desorption cycles."
+        }
+    },
+    "paranthamanRecoveryLithiumGeothermal2017": {
+        "IsothermUnits": {
+            "C_e": "mg/L",
+            "q_e": "mg/g",
+            "T": "K"
+        },
+        "Isotherm": {
+            "T": 368.15,
+            "Ph": "NA",
+            "C_e": [],
+            "C_e_units": "mg/L",
+            "q_e": [],
+            "q_e_units": "mg/g",
+            "FitType": "Temkin",
+            "FitParameters": {
+                "A": "NA",
+                "B": "NA",
+                "A_units": "L/mg",
+                "B_units": "kJ/mol"
+            },
+            "Notes": "DOI 10.1021/acs.est.7b03464 (Environ. Sci. Technol. 2017, 51(22):13481-13486; ORNL, OSTI 1424451). No batch isotherm reported (column-only study); block kept to satisfy schema with A/B=NA (loads but must not be numerically evaluated). T set to column temperature 368.15 K (95 C)."
+        },
+        "KineticsUnits": {
+            "time": "min",
+            "q_t": "mg/g",
+            "T": "K",
+            "C_e": "mg/L"
+        },
+        "KineticsExperiments": [
+            {
+                "T": 368.15,
+                "C_e": 360,
+                "Ph": "NA",
+                "time": [],
+                "q_t": [],
+                "FitType": "PseudoSecondOrder",
+                "FitParameters": {
+                    "k2": "NA",
+                    "q_e": "NA",
+                    "k2_units": "g/mg/min",
+                    "q_e_units": "mg/g"
+                },
+                "Notes": "No batch kinetics reported (column-only study). Placeholder; C_e set to feed Li 360 mg/L, T to 368.15 K (95 C). k2/q_e = NA."
+            }
+        ],
+        "ColumnExperiments": {
+            "Properties": {
+                "Length": 0.13,
+                "Length_units": "m",
+                "Diameter": 0.01,
+                "Diameter_units": "m",
+                "porosity": 0.35
+            },
+            "BreakthroughCurves": {
+                "Units": {
+                    "flowrate": "BV/h",
+                    "T": "K",
+                    "influent_concentration": "mg/L"
+                },
+                "Curves": [
+                    {
+                        "flowrate": 8,
+                        "T": 368.15,
+                        "PH": "NA",
+                        "influent_concentration": 360,
+                        "BV": [],
+                        "C_out/C_in": [],
+                        "Notes": "VERIFIED against source full text. Brine LOADING step of a 3-step load/wash/strip chloride-swing cycle. Column: radius 0.5 cm (D=0.01 m), bed height 13 cm (L=0.13 m), packed LDH (Li:Al=1:1.25) mass 8 g, one bed volume BV = L*pi*r^2 = 10.2 mL, isothermal at 95 C (368.15 K). Load flow 8 BV/h (=1.33 mL/min); wash 8 BV/h; strip 2 BV/h. Feed Li 360 mg/L. Breakthrough (Fig. 6b, text): effluent Li drops to a minimum ~31 mg/L (C_out/C_in~0.086) by BV6, then breaks through to 360 mg/L (C_out/C_in=1.0) at BV9 (saturation); strip effluent peaks ~2.3 g/L over BV11-13. Loading Li recovery ~91%; selectivity factor Li/Na=47.8, Li/K=212 (combined BV13-16). Full BV vs C_out/C_in curve is figure-only -> requires digitization; arrays left empty. Feed brine pH not reported (NA)."
+                    }
+                ]
+            },
+            "Notes": "Simulated Salton Sea geothermal brine (feed, mg/L): Li 360, Na 44000, K 16500, Ca 30400, Mn 1420, B 390. porosity 0.35 is an ESTIMATE (not reported); L, D and flowrate are explicitly stated. Only one column run reported."
+        },
+        "SorbentProperties": {
+            "density": 783,
+            "density_units": "kg/m3",
+            "particle_diameter": 0.00015,
+            "particle_diameter_units": "m",
+            "Notes": "particle_diameter 150 um is stated ('average particle size of 150 um'). density 783 kg/m3 is DERIVED bulk/packed density = packed mass 8 g / bed volume 10.2 mL (mass basis), NOT a measured skeletal/particle density."
+        }
+    },
+    "maStructurePerformanceRelationship2025": {
+        "IsothermUnits": {
+            "C_e": "mg/L",
+            "q_e": "mg/g",
+            "T": "K"
+        },
+        "Isotherm": {
+            "T": 333,
+            "Ph": "NA",
+            "C_e": [],
+            "C_e_units": "mg/L",
+            "q_e": [],
+            "q_e_units": "mg/g",
+            "FitType": "Temkin",
+            "FitParameters": {
+                "A": "NA",
+                "B": "NA",
+                "A_units": "L/mg",
+                "B_units": "kJ/mol"
+            },
+            "Notes": "DOI 10.3389/fchem.2025.1628941 (Ma et al., Front. Chem. 2025, OPEN ACCESS). VERIFIED: NO equilibrium isotherm model fitted (single-point capacities only) -> A/B=NA (loads but must not be numerically evaluated). On 300 ppm LiCl: SA-LDH adsorption 5.67 mg/g at 60 C, SA-LDH desorption 5.84 mg/g at 40 C, raw LDH powder desorption 5.47 mg/g at 40 C. T=333 K (60 C) recorded as the reported adsorption temperature."
+        },
+        "KineticsUnits": {
+            "time": "min",
+            "q_t": "mg/g",
+            "T": "K",
+            "C_e": "mg/L"
+        },
+        "KineticsExperiments": [
+            {
+                "T": 333,
+                "C_e": 300,
+                "Ph": "NA",
+                "time": [],
+                "q_t": [],
+                "FitType": "PseudoSecondOrder",
+                "FitParameters": {
+                    "k2": 0.0158,
+                    "q_e": 5.67,
+                    "k2_units": "g/mg/min",
+                    "q_e_units": "mg/g"
+                },
+                "Notes": "VERIFIED (Fig. 2e / Supp. Table S1): PSO k2=0.0158 for raw LDH powder (PSO better than PFO; PFO k1=0.3990). No separate fitted qe tabulated; q_e=5.67 mg/g is the reported 60 C adsorption capacity used as a PSO-qe PROXY. Feed 300 ppm LiCl. Raw time/q_t only in figure. Kinetic pH not stated (NA)."
+            }
+        ],
+        "ColumnExperiments": {
+            "Properties": {
+                "Length": "NA",
+                "Length_units": "m",
+                "Diameter": "NA",
+                "Diameter_units": "m",
+                "porosity": "NA"
+            },
+            "BreakthroughCurves": {
+                "Units": {
+                    "flowrate": "BV/h",
+                    "T": "K",
+                    "influent_concentration": "mg/L"
+                },
+                "Curves": []
+            },
+            "Notes": "No column experiment (static batch adsorption/desorption). Geometry NA."
+        },
+        "SorbentProperties": {
+            "density": "NA",
+            "density_units": "kg/m3",
+            "particle_diameter": 0.0015,
+            "particle_diameter_units": "m",
+            "Notes": "VERIFIED: Al-based Li/Al-LDH granulated with binders (Ca-alginate SA / PVC / PVDF, 4:1 binder:adsorbent). LDH powder avg particle size 57.9 um (Supp. Table S2); GRANULATED particles ~1-2 mm. particle_diameter = 1.5e-3 m = midpoint of 1-2 mm. Granulation increased BET & pore volume (Type IV/H3) but no numeric BET/density reported (NA)."
+        }
+    },
+    "qinAdsorptionLithiumIons2023": {
+        "IsothermUnits": {
+            "C_e": "mg/L",
+            "q_e": "mg/g",
+            "T": "K"
+        },
+        "Isotherm": {
+            "T": 293,
+            "Ph": 5.0,
+            "C_e": [],
+            "C_e_units": "mg/L",
+            "q_e": [],
+            "q_e_units": "mg/g",
+            "FitType": "Sips",
+            "FitParameters": {
+                "q_max": 8.22,
+                "K_s": 0.48,
+                "m": 1.0,
+                "q_max_units": "mg/g",
+                "K_L_units": "L/mg"
+            },
+            "Notes": "DOI 10.1371/journal.pone.0295269 (Qin et al., PLOS ONE 2023, OPEN ACCESS). Sorbent = magnetic Li/Al-LDH (LiCl.2Al(OH)3.xH2O + Fe3O4@SiO2 core, 'MLDHs'). Native model LANGMUIR (293 K, Table 2); encoded as Sips m=1. q_max=8.22 mg/g and R2=0.9626 are VERIFIED (corroborated across reads). CAUTION: the Langmuir constant K_L is NOT reliably readable from the source table - automated reads returned 0.0009, 0.0121 and 0.48 L/mg; 0.48 is adopted here as the only value physically consistent with near-saturation (qe,exp~8.2~=qmax) at the tested concentrations, but VERIFY against the source PDF before quantitative use. Raw C_e/q_e only in Fig. 11. Isotherms also run at 303/313/323/333 K (params not tabulated at those T)."
+        },
+        "KineticsUnits": {
+            "time": "min",
+            "q_t": "mg/g",
+            "T": "K",
+            "C_e": "mg/L"
+        },
+        "KineticsExperiments": [
+            {
+                "T": 293,
+                "C_e": 400,
+                "Ph": 5.0,
+                "time": [],
+                "q_t": [],
+                "FitType": "PseudoSecondOrder",
+                "FitParameters": {
+                    "k2": 0.0025,
+                    "q_e": 8.23,
+                    "k2_units": "g/mg/min",
+                    "q_e_units": "mg/g"
+                },
+                "Notes": "Table 1: qe,cal=8.23 mg/g, qe,exp=8.15 mg/g, R2=0.9948 (VERIFIED). CAUTION: PSO k2 not reliably readable - automated reads gave 0.0025 / 0.0041 / 0.0050 g/(mg min); 0.0025 (direct source read) adopted, VERIFY against source. Initial Li+ = 0.40 g/L = 400 mg/L; contact 180 min; pH 5 optimum; dose 0.2 g / 15 mL. Raw time/q_t only in Fig. 9."
+            }
+        ],
+        "ColumnExperiments": {
+            "Properties": {
+                "Length": "NA",
+                "Length_units": "m",
+                "Diameter": "NA",
+                "Diameter_units": "m",
+                "porosity": "NA"
+            },
+            "BreakthroughCurves": {
+                "Units": {
+                    "flowrate": "BV/h",
+                    "T": "K",
+                    "influent_concentration": "mg/L"
+                },
+                "Curves": []
+            },
+            "Notes": "No column experiment (batch only). Geometry NA."
+        },
+        "SorbentProperties": {
+            "density": "NA",
+            "density_units": "kg/m3",
+            "particle_diameter": "NA",
+            "particle_diameter_units": "m",
+            "Notes": "Magnetic Li/Al-LDH powder (MLDHs). Neither particle diameter nor bulk density reported (NA); powder used in batch tests."
+        }
     }
 }

@@ -13,7 +13,7 @@ import numpy as np
 
 import JansPlottingStuff as JPS
 
-from ix_model import ColumnParams, LITER_PER_M3, h_plus
+from ix_model import ColumnParams, pH_from_state
 
 _log = logging.getLogger(__name__)
 
@@ -106,7 +106,6 @@ def plot_profiles(
     idx = finite_idx[idx_in_finite]
 
     x = _phase_grid(params)
-    Kw = float(params.Kw)
     A_all = np.asarray(sol.ys.A)
     T_all = np.asarray(sol.ys.T)
     n_all = np.asarray(sol.ys.n)
@@ -114,9 +113,7 @@ def plot_profiles(
     for i in idx:
         label = f"t = {ts_all[i]:.1f} s"
         ax[0].plot(x, A_all[i], label=label)
-        # [H+] in mol/m^3 -> mol/L for pH reference
-        Hp = np.asarray(h_plus(T_all[i], Kw)) / LITER_PER_M3
-        ax[1].plot(x, -np.log10(np.clip(Hp, 1e-300, None)), label=label)
+        ax[1].plot(x, np.asarray(pH_from_state(T_all[i], params)), label=label)
         ax[2].plot(x, n_all[i], label=label)
 
     ax[0].set_xlabel("x [m]"); ax[0].set_ylabel(r"$[A^+]$  [mol/m$^3$]")

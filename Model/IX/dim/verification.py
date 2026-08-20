@@ -1,6 +1,7 @@
 """Verification suite for the IX column model.
 
-Implements spec sec.7 checks 7.1-7.5. Each verify_* function returns
+Implements spec sec.7 checks 7.1-7.5 plus the optional Ooi titration closure.
+Each verify_* function returns
 (passed: bool, detail: str). run_all() prints a one-line PASS/FAIL per check.
 
 These exist outside ix_model.py so the core stays cheap to import.
@@ -23,10 +24,13 @@ from ix_model import (
     PhaseConfig,
     State,
     adsorption_event,
+    coordinate_source_sign,
     desorption_loading_drained,
     h_plus,
     initial_state,
     n_eq,
+    pH_from_state,
+    proton_concentration,
     run_phase,
     vector_field,
     K_W_SI,
@@ -36,7 +40,9 @@ from ix_model import (
 
 # --- shared example parameters ---
 
-def _example_params(N: int = 40) -> ColumnParams:
+def _example_params(
+    N: int = 40, chemistry_model: str = "water"
+) -> ColumnParams:
     """Reasonable defaults used by the verification suite & demo.
 
     Scaled to a typical Li+ recovery scenario:
@@ -72,6 +78,7 @@ def _example_params(N: int = 40) -> ColumnParams:
         eta_min=0.3,
         n_residual=0.4,    # mol/kg  (~10% of Q_sites)
         N=N,
+        chemistry_model=chemistry_model,
     )
 
 
@@ -145,8 +152,85 @@ def verify_isotherm() -> tuple[bool, str]:
     n_src = q_max * K_Lmol * A_L / (1.0 + K_Lmol * A_L)
 
     rel_err = np.max(np.abs(np.asarray(n_ix) - n_src) / np.maximum(n_src, 1e-12))
-    ok = rel_err < 1e-6
-    return ok, f"max rel err vs source isotherm = {rel_err:.2e}"
+    # Any ordinary Langmuir b measured at a reference pH can be represented
+    # exactly at that pH by Kstar=b*[H+]_ref. This is only a calibration of the
+    # pH-dependent Li/H equation, not a pH-independent runtime branch.
+    reference_b = 0.11175
+    mapped = ColumnParams(
+        L=params.L,
+        eps=params.eps,
+        rho_p=params.rho_p,
+        u_s=params.u_s,
+        Q_sites=4.48,
+        Kstar=reference_b * Hp,
+        k=params.k,
+        Kw=params.Kw,
+        A_in=params.A_in,
+        T_in=params.T_in,
+        eta_min=params.eta_min,
+        n_residual=params.n_residual,
+        N=int(params.N),
+        chemistry_model="water",
+    )
+    mapped_expected = float(mapped.Q_sites) * (
+        reference_b * np.asarray(A)
+    ) / (1.0 + reference_b * np.asarray(A))
+    mapped_err = np.max(
+        np.abs(np.asarray(n_eq(A, Hp, mapped)) - mapped_expected)
+    )
+    offset_value = 2.0 / 6.94
+    offset = mapped.replace(equilibrium_offset=offset_value)
+    floor_expected = offset_value + (
+        float(mapped.Q_sites) - offset_value
+    ) * (reference_b * np.asarray(A)) / (
+        1.0 + reference_b * np.asarray(A)
+    )
+    mapped_floor_err = np.max(
+        np.abs(np.asarray(n_eq(A, Hp, offset)) - floor_expected)
+    )
+    mass_action_floor = params.replace(equilibrium_offset=offset_value)
+    mass_action_fraction = (
+        float(params.Kstar) * np.asarray(A)
+    ) / (float(Hp) + float(params.Kstar) * np.asarray(A))
+    mass_action_floor_expected = offset_value + (
+        float(params.Q_sites) - offset_value
+    ) * mass_action_fraction
+    mass_action_floor_err = np.max(
+        np.abs(
+            np.asarray(n_eq(A, Hp, mass_action_floor))
+            - mass_action_floor_expected
+        )
+    )
+    endpoint_err = max(
+        abs(
+            float(n_eq(jnp.asarray(0.0), Hp, mass_action_floor))
+            - offset_value
+        ),
+        abs(
+            float(
+                n_eq(
+                    jnp.asarray(1.0),
+                    jnp.asarray(0.0),
+                    mass_action_floor,
+                )
+            )
+            - float(params.Q_sites)
+        ),
+    )
+    ok = (
+        rel_err < 1e-6
+        and mapped_err < 1e-12
+        and mapped_floor_err < 1e-12
+        and mass_action_floor_err < 1e-12
+        and endpoint_err < 1e-12
+    )
+    return ok, (
+        f"Li/H max rel err = {rel_err:.2e}; "
+        f"reference-pH mapping max abs err = {mapped_err:.2e}; "
+        f"mapped floor max abs err = {mapped_floor_err:.2e}; "
+        f"Li/H floor max abs err = {mass_action_floor_err:.2e}; "
+        f"floor endpoint max abs err = {endpoint_err:.2e}"
+    )
 
 
 def verify_mass_conservation() -> tuple[bool, str]:
@@ -317,6 +401,87 @@ def verify_physics_limits() -> tuple[bool, str]:
     return ok, detail
 
 
+def verify_chemistry_closure() -> tuple[bool, str]:
+    """The Ooi titration closure preserves source values and exchange signs."""
+    ooi = _example_params(N=4, chemistry_model="ooi_naoh_titration").replace(
+        A_in=20.0, T_in=130.0
+    )
+    C_naoh_eq = jnp.asarray([0.0, 20.0, 130.0])
+    expected_pH = np.asarray(
+        [2.6774193548387095, 6.195529540607071, 7.84]
+    )
+    calculated_pH = np.asarray(pH_from_state(C_naoh_eq, ooi))
+    calculated_H = np.asarray(proton_concentration(C_naoh_eq, ooi))
+    values_ok = np.allclose(
+        calculated_pH, expected_pH, rtol=0.0, atol=1e-12
+    ) and np.allclose(
+        calculated_H,
+        LITER_PER_M3 * 10.0 ** (-expected_pH),
+        rtol=2e-13,
+        atol=0.0,
+    )
+
+    # Uniform state == inlet removes advection. Capturing one mole of Li must
+    # consume one mole from both the liquid Li and NaOH-equivalent inventories.
+    state = State(
+        A=jnp.full((4,), 20.0),
+        T=jnp.full((4,), 130.0),
+        n=jnp.zeros((4,)),
+    )
+    dy = jax.jit(vector_field)(0.0, state, ooi)
+    bulk = (1.0 - float(ooi.eps)) * float(ooi.rho_p)
+    li_residual = np.asarray(float(ooi.eps) * dy.A + bulk * dy.n)
+    naoh_residual = np.asarray(float(ooi.eps) * dy.T + bulk * dy.n)
+    scale = max(float(np.max(np.abs(bulk * np.asarray(dy.n)))), 1e-14)
+    coupling_error = max(
+        float(np.max(np.abs(li_residual))),
+        float(np.max(np.abs(naoh_residual))),
+    ) / scale
+    coupling_ok = (
+        coordinate_source_sign(ooi) == -1.0
+        and float(np.min(np.asarray(dy.n))) > 0.0
+        and coupling_error < 1e-12
+    )
+
+    # A default-constructed parameter set must retain the water closure and
+    # proton-release sign. Use the stable basic-side quadratic root here too.
+    old = _example_params(N=4).replace(A_in=20.0, T_in=-10.0)
+    old_state = State(
+        A=jnp.full((4,), 20.0),
+        T=jnp.full((4,), -10.0),
+        n=jnp.zeros((4,)),
+    )
+    old_dy = vector_field(0.0, old_state, old)
+    water_root = np.sqrt(100.0 + 4.0 * float(old.Kw))
+    H_old = 2.0 * float(old.Kw) / (water_root + 10.0)
+    nstar_old = (
+        float(old.Q_sites)
+        * (float(old.Kstar) * 20.0)
+        / (H_old + float(old.Kstar) * 20.0)
+    )
+    dn_old = float(old.k) * nstar_old
+    coup_old = bulk / float(old.eps) * dn_old
+    legacy_ok = (
+        old.chemistry_model == "water"
+        and coordinate_source_sign(old) == 1.0
+        and all(
+            np.allclose(np.asarray(got), want, rtol=2e-13, atol=1e-13)
+            for got, want in (
+                (old_dy.n, dn_old),
+                (old_dy.A, -coup_old),
+                (old_dy.T, coup_old),
+            )
+        )
+    )
+
+    ok = values_ok and coupling_ok and legacy_ok
+    return ok, (
+        f"Ooi pH={calculated_pH.tolist()}; "
+        f"coupling rel err={coupling_error:.2e}; "
+        f"water closure={'consistent' if legacy_ok else 'CHANGED'}"
+    )
+
+
 # --- runner ------------------------------------------------------------------
 
 _CHECKS: list[tuple[str, Callable[[], tuple[bool, str]]]] = [
@@ -325,6 +490,7 @@ _CHECKS: list[tuple[str, Callable[[], tuple[bool, str]]]] = [
     ("7.3 grid convergence",    verify_grid_convergence),
     ("7.4 event localization",  verify_event_localization),
     ("7.5 physics limits",      verify_physics_limits),
+    ("7.6 chemistry closure",   verify_chemistry_closure),
 ]
 
 
@@ -362,11 +528,5 @@ def run_all() -> bool:
 
 
 if __name__ == "__main__":
-    # Lazy import to avoid coupling verification.py to utils package layout
-    # when it's imported as a library.
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from utils.logging_setup import configure_logging
-    configure_logging()
-    run_all()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    raise SystemExit(not run_all())

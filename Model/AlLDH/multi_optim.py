@@ -172,7 +172,7 @@ if __name__ == "__main__":
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2020")
+    study = Study.from_json("LiteratureReview/isotherm_kinetics.json", "jiangAdsorptionLithiumIons2019")
 
     if args.k_s_bounds is None:
         k_s_study = study.get_kinetics_experiment_from_concentration(args.brine_concentration).kinetics_params.k2_si

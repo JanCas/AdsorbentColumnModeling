@@ -396,9 +396,6 @@ class SipsIsothermFit(BaseIsothermFit):
     K_s_units: str
     Q_max_units: str
 
-    def __post_init__(self):
-        Warning.warn("Sips Isotherm model is not yet implemented.")
-
     @property
     def K_s_si(self) -> float:
         """
@@ -433,6 +430,19 @@ class SipsIsothermFit(BaseIsothermFit):
         """
         q_e = (self.Q_max_si * (self.K_s_si * C_eq_si) ** self.n) / (1 + (self.K_s_si * C_eq_si) ** self.n)
         return q_e
+
+    def q_eq_si_jax(self, C_eq_si):
+        return self.q_eq_si(C_eq_si)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SipsIsothermFit":
+        return cls(
+            K_s=data["K_s"],
+            n=data["m"],
+            Q_max=data["q_max"],
+            K_s_units=data.get("K_s_units", data["K_L_units"]),
+            Q_max_units=data["q_max_units"],
+        )
 
 class TemkinIsothermFit(BaseIsothermFit):
     fit_type: ClassVar[str] = "Temkin"

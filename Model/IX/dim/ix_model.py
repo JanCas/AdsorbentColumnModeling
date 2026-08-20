@@ -9,13 +9,12 @@ Unit convention (SI, fixed once here):
     u_s               m/s
     x, L              m
     k                 1/s
-    K*                dimensionless (K* = K * [H+]; from source: K = 1090 L/mol,
-                      [H+] @ pH 12 = 1e-12 mol/L  =>  K* = 1.09e-9, dimensionless)
+    K*                dimensionless Li+/H+ mass-action constant
     K_w               (mol/m^3)^2
 
 Conversions from source fit (mol/L basis):
     K_w_source = 1e-14 (mol/L)^2  ->  K_W_SI = 1e-8 (mol/m^3)^2
-    K* is dimensionless and needs no conversion.
+    K* is dimensionless and needs no unit conversion.
 
 This module is pure JAX. Plotting (matplotlib + JansPlottingStuff) lives in
 Model/IX/plotting.py and verification (Spec sec.7) in Model/IX/verification.py.
@@ -57,7 +56,10 @@ K_W_SI = 1e-8  # (mol/m^3)^2 ; from K_w = 1e-14 (mol/L)^2
 class State(eqx.Module):
     """Field state at every spatial node. Each leaf has shape (N,)."""
     A: jax.Array  # mol/m^3
-    T: jax.Array  # mol/m^3
+    # Transported chemistry coordinate [mol/m^3]. In the default water model
+    # this is proton excess, [H+] - [OH-]. In the Ooi titration model this is
+    # the measured NaOH-equivalent concentration.
+    T: jax.Array
     n: jax.Array  # mol/kg
 
 
@@ -75,10 +77,39 @@ class ColumnParams(eqx.Module):
     eta_min: jax.Array
     n_residual: jax.Array
     N: int = eqx.field(static=True)
+    equilibrium_offset: jax.Array = eqx.field(default=0.0)  # mol/kg floor
+    # Liquid [H+] in mol/m^3 imposed when chemistry_model == "clamped_pH".
+    H_clamp: jax.Array = eqx.field(default=0.0)
+    # Pseudo-second-order rate constant, kg/(mol s), used when
+    # kinetic_model == "pso". Ignored under the default LDF law.
+    k2: jax.Array = eqx.field(default=0.0)
+    chemistry_model: str = eqx.field(static=True, default="water")
+    kinetic_model: str = eqx.field(static=True, default="ldf")
+    equilibrium_model: str = eqx.field(
+        static=True, default="li_h_mass_action"
+    )
 
     def __post_init__(self):
+        if self.chemistry_model not in (
+            "water", "ooi_naoh_titration", "clamped_pH"
+        ):
+            raise ValueError(
+                "chemistry_model must be 'water', 'ooi_naoh_titration', or "
+                f"'clamped_pH', got {self.chemistry_model!r}"
+            )
+        if self.kinetic_model not in ("ldf", "pso"):
+            raise ValueError(
+                "kinetic_model must be 'ldf' or 'pso', "
+                f"got {self.kinetic_model!r}"
+            )
+        if self.equilibrium_model != "li_h_mass_action":
+            raise ValueError(
+                "IX equilibrium_model must be 'li_h_mass_action', "
+                f"got {self.equilibrium_model!r}"
+            )
         for f in ("L", "eps", "rho_p", "u_s", "Q_sites", "Kstar", "k", "Kw",
-                  "A_in", "T_in", "eta_min", "n_residual"):
+                  "A_in", "T_in", "eta_min", "n_residual",
+                  "equilibrium_offset", "H_clamp", "k2"):
             object.__setattr__(self, f, jnp.asarray(getattr(self, f)))
 
     @property
@@ -102,6 +133,11 @@ class PhaseConfig(eqx.Module):
     cond_fn: Callable = eqx.field(static=True)
     max_steps: int = eqx.field(static=True)
     save_ts: Optional[jax.Array] = None
+    # Solver selector. "tsit5" (explicit, the v1 default) is fastest when the
+    # uptake ODE is mild. Large LDF rates under the water closure stiffen the
+    # T -> [H+] -> n_eq feedback and exhaust max_steps on Tsit5; the implicit
+    # Kvaerno paths handle those. Static, so changing it retraces.
+    solver: str = eqx.field(static=True, default="tsit5")
 
     def __post_init__(self):
         object.__setattr__(self, "A_in", jnp.asarray(self.A_in))
@@ -114,20 +150,143 @@ class PhaseConfig(eqx.Module):
 
 def h_plus(T: jax.Array, Kw: jax.Array) -> jax.Array:
     """Recover [H+] from proton excess [T] via the water self-ionization
-    quadratic [H+]^2 - [T][H+] - Kw = 0. Positive root, smooth for any T."""
-    return 0.5 * (T + jnp.sqrt(T * T + 4.0 * Kw))
+    quadratic [H+]^2 - [T][H+] - Kw = 0.
+
+    The conjugate form on the basic (negative-T) branch avoids cancellation.
+    """
+    root = jnp.sqrt(T * T + 4.0 * Kw)
+    acidic = 0.5 * (T + root)
+    basic = 2.0 * Kw / (root - T)
+    return jnp.where(T >= 0.0, acidic, basic)
+
+
+def ooi_naoh_equivalent_pH(C_naoh_eq: jax.Array) -> jax.Array:
+    """Ooi et al. whole-brine titration fit, on its measured domain only.
+
+    ``C_naoh_eq`` is the measured NaOH-equivalent coordinate in mol/m^3,
+    numerically equal to mmol/L. The paper gives separate fits below and above
+    45 mmol/L but does not define equality; this implementation assigns
+    C=45 mol/m^3 to the upper, linear branch.
+
+    The fit was measured over roughly 0 to 130 mol/m^3 of added NaOH. It is NOT
+    valid for negative argument: a NaOH-equivalent concentration is a titration
+    quantity and cannot be below zero. Callers must clamp. See
+    ``ooi_proton_concentration`` for the closure that handles exhaustion.
+    """
+    low = 1.0 + 5.2 * jax.nn.sigmoid(
+        0.39 * C_naoh_eq - jnp.log(jnp.asarray(2.1))
+    )
+    high = 0.018 * C_naoh_eq + 5.5
+    return jnp.where(C_naoh_eq < 45.0, low, high)
+
+
+# [H+] of the brine at zero NaOH equivalent, from the titration fit itself:
+# pH(0) = 1 + 5.2/(1 + 2.1) = 2.6774 -> 2.1023 mol/m^3. The zero-alkalinity
+# brine is already acidic; this is the anchor the exhausted branch builds on.
+OOI_H_AT_ZERO_ALKALINITY = LITER_PER_M3 * 10.0 ** (
+    -(1.0 + 5.2 / (1.0 + 2.1))
+)
+
+
+def ooi_proton_concentration(T: jax.Array) -> jax.Array:
+    """Liquid [H+] in mol/m^3 under the Ooi closure, valid for exhausted beds.
+
+    Two regimes, continuous at T = 0:
+
+    * ``T >= 0`` — NaOH equivalent is present. [H+] follows Ooi's measured
+      whole-brine titration fit, which is the calibrated regime.
+    * ``T < 0``  — the alkalinity has been fully consumed by proton release.
+      The deficit is carried as free strong acid on top of the zero-alkalinity
+      brine state, so [H+] = [H+](0) + |T|.
+
+    The second branch is an explicit extension, not a measurement: Ooi titrated
+    only from zero upward. It replaces the previous behaviour, which evaluated
+    the sigmoid at negative argument. That was unbounded extrapolation and it
+    saturated at pH 1.000, giving the model a hard pH floor that the reported
+    effluent (pH 0.76 minimum) actually goes below.
+    """
+    fit_H = LITER_PER_M3 * jnp.power(
+        10.0, -ooi_naoh_equivalent_pH(jnp.clip(T, 0.0, None))
+    )
+    exhausted_H = OOI_H_AT_ZERO_ALKALINITY - T
+    return jnp.where(T >= 0.0, fit_H, exhausted_H)
+
+
+def pH_from_state(T: jax.Array, args: ColumnParams) -> jax.Array:
+    """Map the transported chemistry coordinate to operational pH."""
+    if args.chemistry_model == "water":
+        return -jnp.log10(h_plus(T, args.Kw) / LITER_PER_M3)
+    if args.chemistry_model == "clamped_pH":
+        return jnp.full_like(
+            T, -jnp.log10(args.H_clamp / LITER_PER_M3)
+        )
+    return -jnp.log10(ooi_proton_concentration(T) / LITER_PER_M3)
+
+
+def proton_concentration(T: jax.Array, args: ColumnParams) -> jax.Array:
+    """Return liquid [H+] in mol/m^3 under the selected chemistry closure.
+
+    ``clamped_pH`` is a DIAGNOSTIC closure, not a physical one: it pins [H+] at
+    the feed value everywhere, i.e. an infinite buffer. It bounds what any real
+    buffer closure could achieve and isolates the adsorption submodel from the
+    pH feedback. Results from it are not validation.
+    """
+    if args.chemistry_model == "water":
+        return h_plus(T, args.Kw)
+    if args.chemistry_model == "clamped_pH":
+        return jnp.broadcast_to(args.H_clamp, T.shape)
+    return ooi_proton_concentration(T)
+
+
+def coordinate_source_sign(args: ColumnParams) -> float:
+    """Reaction sign for the transported chemistry coordinate.
+
+    Li uptake releases proton excess in the water closure (+1), but consumes
+    NaOH-equivalent in the Ooi titration closure (-1). Under ``clamped_pH`` the
+    T field is a passive tracer that no longer feeds back into loading, so the
+    water sign is retained for bookkeeping.
+    """
+    return -1.0 if args.chemistry_model == "ooi_naoh_titration" else 1.0
 
 
 def n_eq(A: jax.Array, Hp: jax.Array, args: ColumnParams) -> jax.Array:
-    """Mass-action (Langmuir-form) equilibrium loading."""
-    return args.Q_sites * (args.Kstar * A) / (Hp + args.Kstar * A)
+    """Li+/H+ mass-action equilibrium loading.
+
+    ``Kstar`` is dimensionless. ``equilibrium_offset`` is the zero-occupancy
+    loading floor in mol/kg and ``Q_sites`` remains the upper asymptote. A
+    physical floor must satisfy ``0 <= equilibrium_offset <= Q_sites``.
+    """
+    occupied_fraction = (args.Kstar * A) / (Hp + args.Kstar * A)
+    return args.equilibrium_offset + (
+        args.Q_sites - args.equilibrium_offset
+    ) * occupied_fraction
+
+
+def uptake_rate(driving: jax.Array, args: ColumnParams) -> jax.Array:
+    """Solid uptake rate from the driving force (n_eq - n), in mol/kg/s.
+
+    ``ldf`` — linear driving force, ``dn/dt = k (n_eq - n)``. First order in the
+    driving force, the v1 default.
+
+    ``pso`` — pseudo-second-order, ``dn/dt = k2 (n_eq - n)|n_eq - n|``. The
+    textbook PSO law is ``k2 (qe - q)^2``, which is written for batch adsorption
+    where ``q <= qe`` always holds. In a column the local loading routinely
+    exceeds the local equilibrium — the front passes, pH drops, and the solid
+    must release lithium — so the squared form would drive desorption the wrong
+    way. The signed product preserves the PSO magnitude while keeping the rate
+    antisymmetric about equilibrium, which is required for the desorption half
+    of a cycle and for the exchange front to be stable.
+    """
+    if args.kinetic_model == "ldf":
+        return args.k * driving
+    return args.k2 * driving * jnp.abs(driving)
 
 
 def vector_field(t, y: State, args: ColumnParams) -> State:
     A, T, n = y.A, y.T, y.n
 
-    Hp = h_plus(T, args.Kw)
-    dn = args.k * (n_eq(A, Hp, args) - n)
+    Hp = proton_concentration(T, args)
+    dn = uptake_rate(n_eq(A, Hp, args) - n, args)
 
     A_up = jnp.concatenate([args.A_in[None], A[:-1]])
     T_up = jnp.concatenate([args.T_in[None], T[:-1]])
@@ -136,7 +295,7 @@ def vector_field(t, y: State, args: ColumnParams) -> State:
 
     coup = (1.0 - args.eps) / args.eps * args.rho_p * dn
     dA = -(args.u_s / args.eps) * dAdx - coup
-    dT = -(args.u_s / args.eps) * dTdx + coup
+    dT = -(args.u_s / args.eps) * dTdx + coordinate_source_sign(args) * coup
     return State(A=dA, T=dT, n=dn)
 
 
@@ -168,6 +327,27 @@ def desorption_loading_drained(t, y: State, args: ColumnParams, **kw):
 # Event root finding: Bisection is robust for the smooth scalar events in sec.4.3
 # without needing a Jacobian (Newton needs autodiff of the cond_fn).
 _SOLVER = diffrax.Tsit5()
+
+
+def _solver_for(name: str):
+    """Build the requested diffrax solver.
+
+    The implicit paths use an optimistix Newton root finder, which is why
+    optimistix is a dependency of this module.
+    """
+    if name == "tsit5":
+        return diffrax.Tsit5()
+    root_finder = optimistix.Newton(rtol=1e-8, atol=1e-10)
+    if name == "kvaerno5":
+        return diffrax.Kvaerno5(root_finder=root_finder)
+    if name == "kvaerno3":
+        return diffrax.Kvaerno3(root_finder=root_finder)
+    if name == "implicit_euler":
+        return diffrax.ImplicitEuler(root_finder=root_finder)
+    raise ValueError(
+        "solver must be one of 'tsit5', 'kvaerno5', 'kvaerno3', "
+        f"'implicit_euler'; got {name!r}"
+    )
 # PID coefficients copied from Model/AlLDH/diffrax_non_dim.py:110 — the
 # diffrax default (pcoeff=0, icoeff=1) was too aggressive at rejecting steps
 # near the moving MTZ on this problem and exhausted max_steps before the
@@ -200,7 +380,7 @@ def run_phase(y: State, ph: PhaseConfig, base_args: ColumnParams) -> diffrax.Sol
     )
     return diffrax.diffeqsolve(
         _TERM,
-        _SOLVER,
+        _solver_for(ph.solver),
         t0=0.0,
         t1=ph.t_max,
         dt0=ph.dt0,
