@@ -38,8 +38,10 @@ _log = logging.getLogger(__name__)
 def _demo_params(N: int = 40) -> ColumnParams:
     return ColumnParams(
         L=5e-3, eps=0.4, rho_p=1000.0, u_s=1e-3,
-        Q_sites=3.98, Kstar=1.09e-9, k=5e-1, Kw=K_W_SI,
+        Q_sites=3.98, Kstar=1.09e-9, Q2_sites=0.0, Kstar2=3.24e-4,
+        k=5e-1, Kw=K_W_SI,
         A_in=20.0, T_in=-10.0,           # placeholder; phases override
+        Ka=10.0 ** (-9.25) * 1000.0, C_B_in=0.0,   # unbuffered
         eta_min=0.3, n_residual=0.4,
         N=N,
     )
@@ -52,7 +54,7 @@ def _demo_phases() -> list[PhaseConfig]:
     return [
         PhaseConfig(
             name="adsorption",
-            A_in=20.0, T_in=-10.0,        # Li+ brine at pH 12
+            A_in=20.0, T_in=-10.0, C_B_in=0.0,   # Li+ brine at pH 12
             t_max=3.0e3, dt0=1e-3,
             cond_fn=adsorption_event,
             max_steps=5_000_000,
@@ -60,7 +62,7 @@ def _demo_phases() -> list[PhaseConfig]:
         ),
         PhaseConfig(
             name="desorption",
-            A_in=0.0, T_in=100.0,         # acidic eluent at pH 1
+            A_in=0.0, T_in=100.0, C_B_in=0.0,    # acidic eluent at pH 1
             t_max=2.0e2, dt0=1e-3,
             cond_fn=desorption_loading_drained,
             max_steps=5_000_000,

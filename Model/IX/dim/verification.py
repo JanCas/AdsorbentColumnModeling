@@ -24,7 +24,6 @@ from ix_model import (
     PhaseConfig,
     State,
     adsorption_event,
-    coordinate_source_sign,
     desorption_loading_drained,
     h_plus,
     initial_state,
@@ -41,7 +40,7 @@ from ix_model import (
 # --- shared example parameters ---
 
 def _example_params(
-    N: int = 40, chemistry_model: str = "water"
+    N: int = 40
 ) -> ColumnParams:
     """Reasonable defaults used by the verification suite & demo.
 
@@ -61,6 +60,8 @@ def _example_params(
         u_s=1e-3,          # m/s
         Q_sites=3.98,      # mol/kg (source: q_max for AlLDH)
         Kstar=1.09e-9,     # dimensionless (source fit at pH 12)
+        Q2_sites=0.0,
+        Kstar2=3.24e-4,
         # LDF rate chosen so the Damkohler number k * t_res = k * L * eps / u_s
         # is O(1). With the values below, t_res = 2 s and k * t_res = 1.0, so
         # capture during a single residence pass is significant (rather than the
@@ -70,6 +71,8 @@ def _example_params(
         Kw=K_W_SI,         # (mol/m^3)^2
         A_in=20.0,         # mol/m^3 placeholder (Li+ brine)
         T_in=-10.0,        # mol/m^3 placeholder (pH 12)
+        Ka=10.0 ** (-9.25) * 1000.0,   # NH4+/NH3, unused while C_B_in = 0
+        C_B_in=0.0,        # no buffer: reduces to the water closure
         # eta_min sits below the H+/Li+ stoichiometric plateau at
         #     A_out = max(0, A_in - |T_in|) = 10 mol/m^3 -> eta_plateau = 0.5.
         # An eta_min set *at* the plateau triggers on floating-point noise
@@ -78,7 +81,6 @@ def _example_params(
         eta_min=0.3,
         n_residual=0.4,    # mol/kg  (~10% of Q_sites)
         N=N,
-        chemistry_model=chemistry_model,
     )
 
 
@@ -92,6 +94,7 @@ def _adsorption_phase(params: ColumnParams, save_n: int = 120) -> PhaseConfig:
         name="adsorption",
         A_in=20.0,          # mol/m^3 (Li+ in brine)
         T_in=-10.0,         # mol/m^3 (pH 12 in mol/L)
+        C_B_in=0.0,
         t_max=_T_MAX,
         dt0=1e-3,
         cond_fn=adsorption_event,
@@ -106,6 +109,7 @@ def _desorption_phase(params: ColumnParams, save_n: int = 120) -> PhaseConfig:
         name="desorption",
         A_in=0.0,
         T_in=100.0,         # mol/m^3 (pH 1)
+        C_B_in=0.0,
         t_max=_T_MAX,
         dt0=1e-3,
         cond_fn=desorption_loading_drained,
@@ -163,14 +167,17 @@ def verify_isotherm() -> tuple[bool, str]:
         u_s=params.u_s,
         Q_sites=4.48,
         Kstar=reference_b * Hp,
+        Q2_sites=0.0,
+        Kstar2=3.24e-4,
         k=params.k,
         Kw=params.Kw,
         A_in=params.A_in,
         T_in=params.T_in,
+        Ka=10.0 ** (-9.25) * 1000.0,
+        C_B_in=0.0,
         eta_min=params.eta_min,
         n_residual=params.n_residual,
         N=int(params.N),
-        chemistry_model="water",
     )
     mapped_expected = float(mapped.Q_sites) * (
         reference_b * np.asarray(A)
@@ -178,58 +185,20 @@ def verify_isotherm() -> tuple[bool, str]:
     mapped_err = np.max(
         np.abs(np.asarray(n_eq(A, Hp, mapped)) - mapped_expected)
     )
-    offset_value = 2.0 / 6.94
-    offset = mapped.replace(equilibrium_offset=offset_value)
-    floor_expected = offset_value + (
-        float(mapped.Q_sites) - offset_value
-    ) * (reference_b * np.asarray(A)) / (
-        1.0 + reference_b * np.asarray(A)
-    )
-    mapped_floor_err = np.max(
-        np.abs(np.asarray(n_eq(A, Hp, offset)) - floor_expected)
-    )
-    mass_action_floor = params.replace(equilibrium_offset=offset_value)
-    mass_action_fraction = (
-        float(params.Kstar) * np.asarray(A)
-    ) / (float(Hp) + float(params.Kstar) * np.asarray(A))
-    mass_action_floor_expected = offset_value + (
-        float(params.Q_sites) - offset_value
-    ) * mass_action_fraction
-    mass_action_floor_err = np.max(
-        np.abs(
-            np.asarray(n_eq(A, Hp, mass_action_floor))
-            - mass_action_floor_expected
-        )
-    )
+    # Endpoints of the single-site form: zero loading at zero lithium, and the
+    # full capacity in the no-competition limit.
     endpoint_err = max(
+        abs(float(n_eq(jnp.asarray(0.0), Hp, params))),
         abs(
-            float(n_eq(jnp.asarray(0.0), Hp, mass_action_floor))
-            - offset_value
-        ),
-        abs(
-            float(
-                n_eq(
-                    jnp.asarray(1.0),
-                    jnp.asarray(0.0),
-                    mass_action_floor,
-                )
-            )
+            float(n_eq(jnp.asarray(1.0), jnp.asarray(0.0), params))
             - float(params.Q_sites)
         ),
     )
-    ok = (
-        rel_err < 1e-6
-        and mapped_err < 1e-12
-        and mapped_floor_err < 1e-12
-        and mass_action_floor_err < 1e-12
-        and endpoint_err < 1e-12
-    )
+    ok = rel_err < 1e-6 and mapped_err < 1e-12 and endpoint_err < 1e-12
     return ok, (
         f"Li/H max rel err = {rel_err:.2e}; "
         f"reference-pH mapping max abs err = {mapped_err:.2e}; "
-        f"mapped floor max abs err = {mapped_floor_err:.2e}; "
-        f"Li/H floor max abs err = {mass_action_floor_err:.2e}; "
-        f"floor endpoint max abs err = {endpoint_err:.2e}"
+        f"endpoint max abs err = {endpoint_err:.2e}"
     )
 
 
@@ -352,7 +321,7 @@ def verify_physics_limits() -> tuple[bool, str]:
     # Short, fixed-time run: t_short = 0.5 * L * eps / u_s so the front is mid-bed
     t_short = 0.5 * float(params0.L) * float(params0.eps) / float(params0.u_s)
     ads0 = PhaseConfig(
-        name="adsorption", A_in=ads.A_in, T_in=ads.T_in,
+        name="adsorption", A_in=ads.A_in, T_in=ads.T_in, C_B_in=ads.C_B_in,
         t_max=t_short, dt0=ads.dt0,
         cond_fn=_never_fires,
         max_steps=ads.max_steps,
@@ -387,6 +356,7 @@ def verify_physics_limits() -> tuple[bool, str]:
         A=jnp.zeros(N_d),
         T=jnp.full((N_d,), 1.0),   # already acidic everywhere
         n=jnp.full((N_d,), float(params_des.Q_sites) * 0.8),
+        C_B=jnp.zeros(N_d),
     )
     args_des = params_des.replace(A_in=params_des.A_in, T_in=params_des.T_in)
     dY = vector_field(0.0, loaded, args_des)
@@ -402,83 +372,64 @@ def verify_physics_limits() -> tuple[bool, str]:
 
 
 def verify_chemistry_closure() -> tuple[bool, str]:
-    """The Ooi titration closure preserves source values and exchange signs."""
-    ooi = _example_params(N=4, chemistry_model="ooi_naoh_titration").replace(
-        A_in=20.0, T_in=130.0
+    """Water closure: [H+] recovery, proton-release sign, and 1:1 coupling."""
+    params = _example_params(N=4).replace(A_in=20.0, T_in=-10.0)
+
+    # [H+] from proton excess, on both branches of the quadratic. The basic
+    # branch uses the conjugate form, so check it against the stable root.
+    T_probe = jnp.asarray([-10.0, 0.0, 10.0])
+    root = np.sqrt(np.asarray(T_probe) ** 2 + 4.0 * float(params.Kw))
+    expected_H = np.where(
+        np.asarray(T_probe) >= 0.0,
+        0.5 * (np.asarray(T_probe) + root),
+        2.0 * float(params.Kw) / (root - np.asarray(T_probe)),
     )
-    C_naoh_eq = jnp.asarray([0.0, 20.0, 130.0])
-    expected_pH = np.asarray(
-        [2.6774193548387095, 6.195529540607071, 7.84]
+    calculated_H = np.asarray(
+        proton_concentration(T_probe, jnp.zeros_like(T_probe), params)
     )
-    calculated_pH = np.asarray(pH_from_state(C_naoh_eq, ooi))
-    calculated_H = np.asarray(proton_concentration(C_naoh_eq, ooi))
+    calculated_pH = np.asarray(
+        pH_from_state(T_probe, jnp.zeros_like(T_probe), params)
+    )
     values_ok = np.allclose(
-        calculated_pH, expected_pH, rtol=0.0, atol=1e-12
+        calculated_H, expected_H, rtol=2e-13, atol=0.0
     ) and np.allclose(
-        calculated_H,
-        LITER_PER_M3 * 10.0 ** (-expected_pH),
+        calculated_pH,
+        -np.log10(expected_H / LITER_PER_M3),
         rtol=2e-13,
         atol=0.0,
     )
 
     # Uniform state == inlet removes advection. Capturing one mole of Li must
-    # consume one mole from both the liquid Li and NaOH-equivalent inventories.
+    # remove one mole of dissolved Li and release one mole of proton excess.
     state = State(
-        A=jnp.full((4,), 20.0),
-        T=jnp.full((4,), 130.0),
-        n=jnp.zeros((4,)),
-    )
-    dy = jax.jit(vector_field)(0.0, state, ooi)
-    bulk = (1.0 - float(ooi.eps)) * float(ooi.rho_p)
-    li_residual = np.asarray(float(ooi.eps) * dy.A + bulk * dy.n)
-    naoh_residual = np.asarray(float(ooi.eps) * dy.T + bulk * dy.n)
-    scale = max(float(np.max(np.abs(bulk * np.asarray(dy.n)))), 1e-14)
-    coupling_error = max(
-        float(np.max(np.abs(li_residual))),
-        float(np.max(np.abs(naoh_residual))),
-    ) / scale
-    coupling_ok = (
-        coordinate_source_sign(ooi) == -1.0
-        and float(np.min(np.asarray(dy.n))) > 0.0
-        and coupling_error < 1e-12
-    )
-
-    # A default-constructed parameter set must retain the water closure and
-    # proton-release sign. Use the stable basic-side quadratic root here too.
-    old = _example_params(N=4).replace(A_in=20.0, T_in=-10.0)
-    old_state = State(
         A=jnp.full((4,), 20.0),
         T=jnp.full((4,), -10.0),
         n=jnp.zeros((4,)),
+        C_B=jnp.zeros((4,)),
     )
-    old_dy = vector_field(0.0, old_state, old)
-    water_root = np.sqrt(100.0 + 4.0 * float(old.Kw))
-    H_old = 2.0 * float(old.Kw) / (water_root + 10.0)
-    nstar_old = (
-        float(old.Q_sites)
-        * (float(old.Kstar) * 20.0)
-        / (H_old + float(old.Kstar) * 20.0)
-    )
-    dn_old = float(old.k) * nstar_old
-    coup_old = bulk / float(old.eps) * dn_old
-    legacy_ok = (
-        old.chemistry_model == "water"
-        and coordinate_source_sign(old) == 1.0
-        and all(
-            np.allclose(np.asarray(got), want, rtol=2e-13, atol=1e-13)
-            for got, want in (
-                (old_dy.n, dn_old),
-                (old_dy.A, -coup_old),
-                (old_dy.T, coup_old),
-            )
-        )
+    dy = jax.jit(vector_field)(0.0, state, params)
+    bulk = (1.0 - float(params.eps)) * float(params.rho_p)
+    li_residual = np.asarray(float(params.eps) * dy.A + bulk * dy.n)
+    proton_residual = np.asarray(float(params.eps) * dy.T - bulk * dy.n)
+    scale = max(float(np.max(np.abs(bulk * np.asarray(dy.n)))), 1e-14)
+    coupling_error = max(
+        float(np.max(np.abs(li_residual))),
+        float(np.max(np.abs(proton_residual))),
+    ) / scale
+
+    # Uptake must be positive on a clean bed, and the released protons must
+    # push T upward (toward acid), never downward.
+    signs_ok = (
+        float(np.min(np.asarray(dy.n))) > 0.0
+        and float(np.min(np.asarray(dy.T))) > 0.0
+        and float(np.max(np.asarray(dy.A))) < 0.0
     )
 
-    ok = values_ok and coupling_ok and legacy_ok
+    ok = values_ok and signs_ok and coupling_error < 1e-12
     return ok, (
-        f"Ooi pH={calculated_pH.tolist()}; "
+        f"pH({T_probe.tolist()})={np.round(calculated_pH, 4).tolist()}; "
         f"coupling rel err={coupling_error:.2e}; "
-        f"water closure={'consistent' if legacy_ok else 'CHANGED'}"
+        f"signs={'ok' if signs_ok else 'WRONG'}"
     )
 
 
