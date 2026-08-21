@@ -113,7 +113,7 @@ def plot_profiles(
     for i in idx:
         label = f"t = {ts_all[i]:.1f} s"
         ax[0].plot(x, A_all[i], label=label)
-        ax[1].plot(x, np.asarray(pH_from_state(T_all[i], params)), label=label)
+        ax[1].plot(x, np.asarray(pH_from_state(T_all[i], CB_all[i], params)), label=label)
         ax[2].plot(x, n_all[i], label=label)
 
     ax[0].set_xlabel("x [m]"); ax[0].set_ylabel(r"$[A^+]$  [mol/m$^3$]")

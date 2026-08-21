@@ -1,0 +1,100 @@
+{
+  "q_max_mg_g": 5.9522,
+  "q_max_mol_kg": 0.8576657060518732,
+  "log_K_i": -1.3974019871580134,
+  "K_i": 0.24723845896605415,
+  "n_h2o": 1.0,
+  "reference_li_mg_L": 350.0,
+  "projection_sse_mg2_g2": 0.00830682100675231,
+  "projection_r2": 0.9992956331671528,
+  "jiang_temperature_K": 303,
+  "pitzer_temperature_K": 298.15,
+  "feed_c_LiCl_mol_m3": 50.43227665706052,
+  "feed_c_MgCl2_mol_m3": 4114.379757251594,
+  "feed_a_LiCl": 105.53769280952386,
+  "feed_a_water": 0.46129271548418016,
+  "water_mass_concentration_kg_m3": 859.127762995719,
+  "q_eq_feed_mg_g": 5.495620396578837,
+  "k2_kg_sorbent_mol_Li_s": 0.000100148162948,
+  "rate_law": "dq/dt = k2*(q_eq-q)*abs(q_eq-q)",
+  "fit_basis": "One global k2 fitted to pooled residuals from the three Figure 4C flow-rate curves.",
+  "column_metrics": [
+    {
+      "source_flow_mL_min": 6.0,
+      "source_flow_BV_h": 1.9098593171027443,
+      "rmse_C_over_C0": 0.05736075061980399,
+      "mae_C_over_C0": 0.0438168874900235
+    },
+    {
+      "source_flow_mL_min": 9.0,
+      "source_flow_BV_h": 2.8647889756541165,
+      "rmse_C_over_C0": 0.04577198463761199,
+      "mae_C_over_C0": 0.03657431969121422
+    },
+    {
+      "source_flow_mL_min": 15.0,
+      "source_flow_BV_h": 4.7746482927568605,
+      "rmse_C_over_C0": 0.07601563797766721,
+      "mae_C_over_C0": 0.037825539706783505
+    }
+  ],
+  "height_metrics": [
+    {
+      "comparison": "height",
+      "height_m": 0.3,
+      "source_flow_mL_min": 15.0,
+      "influent_Li_mg_L": 350.0,
+      "rmse_C_over_C0": 0.07598059304914742,
+      "mae_C_over_C0": 0.03857311789594098
+    },
+    {
+      "comparison": "height",
+      "height_m": 0.6,
+      "source_flow_mL_min": 15.0,
+      "influent_Li_mg_L": 350.0,
+      "rmse_C_over_C0": 0.07601563798469375,
+      "mae_C_over_C0": 0.037825539711360524
+    },
+    {
+      "comparison": "height",
+      "height_m": 1.0,
+      "source_flow_mL_min": 15.0,
+      "influent_Li_mg_L": 350.0,
+      "rmse_C_over_C0": 0.05023657292727969,
+      "mae_C_over_C0": 0.04167919260981717
+    }
+  ],
+  "influent_concentration_metrics": [
+    {
+      "comparison": "influent_concentration",
+      "height_m": 0.6,
+      "source_flow_mL_min": 15.0,
+      "influent_Li_mg_L": 300.0,
+      "rmse_C_over_C0": 0.05840509260260369,
+      "mae_C_over_C0": 0.04103154904440207
+    },
+    {
+      "comparison": "influent_concentration",
+      "height_m": 0.6,
+      "source_flow_mL_min": 15.0,
+      "influent_Li_mg_L": 350.0,
+      "rmse_C_over_C0": 0.07601563798469375,
+      "mae_C_over_C0": 0.037825539711360524
+    },
+    {
+      "comparison": "influent_concentration",
+      "height_m": 0.6,
+      "source_flow_mL_min": 15.0,
+      "influent_Li_mg_L": 400.0,
+      "rmse_C_over_C0": 0.07468585032871555,
+      "mae_C_over_C0": 0.04458862447705309
+    }
+  ],
+  "notes": [
+    "n_h2o is conditional because Jiang used one fixed MgCl2 matrix.",
+    "The Mg=0 curve reuses the brine-calibrated K_i and assumes 1000 kg water/m3; it is a counterfactual, not a separate fit.",
+    "Pitzer activities are evaluated at 298.15 K; Jiang ran at 303 K.",
+    "Figure 4A-C curves were digitized from the embedded source figure.",
+    "The same global PSO rate is used for every flow, height, and inlet-concentration case."
+  ]
+}
